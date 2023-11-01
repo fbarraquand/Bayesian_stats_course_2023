@@ -1,0 +1,29 @@
+
+    model {
+    
+    # Priors
+    for (i in 1:5){			# Implicitly define alpha as a vector
+    alpha[i] ~ dnorm(50,0.01) # Beware that a mean at 0 only works because variance is huge. 
+    }
+    sigma ~ dunif(0, 100)
+    tau <- 1 / ( sigma * sigma)
+    
+    # Likelihood
+    for (i in 1:50) {
+    y[i] ~ dnorm(mean[i], tau) 
+    mean[i] <- alpha[x[i]]
+    } # or mean = X %*% alpha
+    
+    # Derived quantities
+    effect2 <- alpha[2] - alpha[1] 
+    effect3 <- alpha[3] - alpha[1] 
+    effect4 <- alpha[4] - alpha[1] 
+    effect5 <- alpha[5] - alpha[1] 
+    # effects are relative to 1, if you want relative to the preceding one (for instance)
+    # you would use alpha[i+1] - alpha[i] for i in 1:4
+    
+    # Custom ``hypothesis'' tests / Define your own contrasts
+    test1 <- (effect2+effect3) + (effect4+effect5) # Should equal zero here
+    test2 <- effect5 - 2 * effect4 		# Equals zero when effect5 = 2*effect4 (which is true here)
+    }
+    

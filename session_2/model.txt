@@ -1,0 +1,16 @@
+
+model {
+
+# Priors
+population.mean ~ dunif(0,5000)         # Normal parameterized by precision
+precision <- 1 / population.variance    # Precision = 1/variance
+population.variance <- population.sd * population.sd
+population.sd ~ dunif(0,100)
+# Note: the order does not matter!
+
+# Likelihood
+for(i in 1:nobs){
+  mass[i] ~ dnorm(population.mean, precision)
+}
+
+}
