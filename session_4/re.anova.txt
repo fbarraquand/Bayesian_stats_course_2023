@@ -1,0 +1,22 @@
+
+model {
+
+# Priors and some derived things
+for (i in 1:npop){
+    alpha[i] ~ dnorm(mu, tau.alpha) 	# Prior for population means
+    effect[i] <- alpha[i] - mu 	# Population effects as derived quant’s
+ }
+ mu ~ dnorm(0,0.001)			# Hyperprior for grand mean svl
+ sigma.alpha ~ dunif(0, 10)		# Hyperprior for sd of population effects
+ sigma.res ~ dunif(0, 10)		# Prior for residual sd
+
+# Likelihood
+ for (i in 1:n) {
+    y[i] ~ dnorm(mean[i], tau.res)
+    mean[i] <- alpha[x[i]]
+ }
+
+# Derived quantities
+ tau.alpha <- 1 / (sigma.alpha * sigma.alpha)
+ tau.res <- 1 / (sigma.res * sigma.res)
+}

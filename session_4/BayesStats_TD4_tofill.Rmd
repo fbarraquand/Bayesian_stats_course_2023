@@ -1,0 +1,357 @@
+---
+title: "Analysis of Swiss Crested Tits population dynamics I"
+author: "F. Barraquand - adapted from Kéry and Royle's Applied hierarchical modeling in Ecology"
+date: "November 21, 2023"
+output:
+  html_document:
+    highlight: textmate
+    theme: united
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+```{r setup, include=FALSE}
+options(width = 300)
+knitr::opts_chunk$set(cache = FALSE) 
+library(R2jags)
+library(knitr)
+library(mcmcplots)
+```
+
+```{r details-about-code, include=FALSE,eval=FALSE}
+#  --------------- Original source: ---------------------------------------  
+#   Applied hierarchical modeling in ecology
+#   Modeling distribution, abundance and species richness using R and BUGS
+#   Volume 2: Dynamic and Advanced models
+#   Marc Kéry & J. Andy Royle
+# Chapter 1 : RELATIVE ABUNDANCE MODELS FOR POPULATION DYNAMICS
+# =============================================================
+# Code from proofs dated 2020-08-18
+# see https://github.com/mikemeredith/AHM_code
+#  ---------------modified by FB starting 2021-05-23 ----------------------  
+``` 
+
+# Linear (mixed) models
+
+## The model system and biological questions
+
+We will be studying the [Swiss Crested Tit](https://en.wikipedia.org/wiki/European_crested_tit#/media/File:Lophophanes_cristatus_-_01.jpg). Its populations have been surveyed by birdwatchers at >250 sites, two to three times a year, from 1999 to 2016. Let's load the data and plot it: 
+
+```{r load-and-plot-data}
+dat<-read.csv("crestedTit.csv")
+#str(dat)
+dat$X<-NULL
+# head(dat)
+## Note: date991 is the date for year 99 and 1st survey, date992 second survey etc. 
+C <- as.matrix(dat[,6:23]) # grab counts 1999:2016
+#head(C)
+year <- 1999:2016
+
+# ~~~~ code to plot figure 1.3 ~~~~~~~~~~
+matplot(year, t(C), main = "", type = "l", lty = 1, xlab = "Year",
+    ylab = "Territory count (# individuals recorded)", lwd = 3, cex.lab = 1.5, frame = FALSE)
+
+```
+
+
+Our questions are the following:
+
+* Is the variation in numbers greater per year or per site? 
+* Does the species population dynamics exhibit a trend? Does the trend vary among sites?
+* What are the effects of covariates like forest cover and elevation? (we know crested tits like trees)
+
+Let's finish the data wrangling
+
+```{r data-wrangling}
+# Grab data for survey dates (for 2-3 surveys per year) and for duration
+# Put into 3D array first, then summarize over reps within a year
+nsite <- nrow(C)
+nyear <- length(year)
+datetmp <- as.matrix(dat[,24:77])
+datefull <- array(datetmp, dim = c(nsite, 3, nyear))
+durtmp <- as.matrix(dat[,78:131])
+durfull <- array(durtmp, dim = c(nsite, 3, nyear))
+
+# Get mean date of survey and mean survey duration for each site and year
+date <- apply(datefull, c(1,3), mean, na.rm = TRUE)
+dur <- apply(durfull, c(1,3), mean, na.rm = TRUE)
+date[date == 'NaN'] <- NA
+dur[dur == 'NaN'] <- NA
+```
+
+## Variation partitioning -- linear model on a transformed scale
+
+The model that we want to fit to data is of the form 
+
+$$ Y_{itk} = \mu + A_i + B_t +\epsilon_{itk}, \; \epsilon_{itk} \sim \mathcal{N}(0,\sigma^2)$$
+with $A_i \sim \mathcal{N}(0,\sigma_{\text{site}}^2)$ and $B_t ~ \sim \mathcal{N}(0,\sigma_{\text{year}}^2)$. It is a *random effects* model, since all terms but the intercept are random variables.  
+
+What does the data look like? Can we try to model this data using a transformation? 
+
+```{r data-distribution}
+hist(C) #highly skewed
+hist(sqrt(C))
+hist(log(C+1)) ## not perfect, but perhaps doable -> look at residuals. 
+LC = log(C+1)
+```
+
+Let us select a subset of sites among the 250. Typically the ones with the most data (although this may affect some estimates, we'll come back to that later). 
+
+```{r selecting sites}
+# Check number of zero years in all sites
+nzero <- apply(C, 1, function(x) sum(x == 0, na.rm = TRUE))
+plot(sort(nzero)) # Make a graph of number of zero years
+sum(nzero <= 1)   # 97 sites with at most 1 zero year
+table(nzero)
+
+# Bundle data with restriction on sites
+sel <- nzero <= 1 # Select sites with <= 1 zero count
+newM <- sum(sel)  # Define new number of sites
+str(bdata <- list(C = C[sel,], M = newM, T = ncol(C[sel,])))
+# List of 3
+# $ C: int [1:97, 1:18] 3 5 9 13 12 2 3 3 6 10 ...
+# $ M: int 97
+# $ T: int 18
+
+LC = log(C+1)
+hist(LC[sel,]) 
+str(bdatal <- list(LC = LC[sel,], M = newM, T = ncol(LC[sel,])))
+
+```
+
+This should make the model easier to fit and faster
+
+
+```{r jags-code-LMM}
+# Specify model in BUGS language
+cat(file = "model_lmm.txt","
+    model {
+
+    # Priors
+    mu ~ dnorm(0, 0.001) # Intercept
+    for(i in 1:...){
+      site[i] ~ ... # Random site effects
+      }
+    tau.site <- pow(sd.site, -2)
+    sd.site ~ ...
+    for(t in 1:...){
+      year[t] ~ ... # Random year effects
+      }
+    tau.year <- pow(sd.year, -2)
+    sd.year ~ ...
+    tau <- pow(sd, -2)
+    sd ~ ...
+
+    # Likelihood
+    for (i in 1:...){
+      for(t in 1:...){
+        LC[i,t] ~ ... # some distribution
+        lambda[i,t] <- mu + ... # some effects 
+        resid[i,t]<-LC[i,t]-lambda[i,t]
+        }
+      }
+    # Derived quantities
+    for(t in 1:..){
+      popindex[t] <- sum(lambda[,t])
+      }
+    }
+    ")
+
+# Initial values
+inits <- function() list(mu = rnorm(1), site = rnorm(newM), year = rnorm(length(year)))
+
+# Parameters monitored
+params <- c("mu", "sd.site", "sd.year", "sd", "site", "year", "popindex","resid","lambda")
+
+# MCMC settings
+ni <- 10000; nt <- 10 ; nb <- 5000 ; nc <- 3 # core number for parallel computation
+
+#to see progress do not use parallel computation (slower)
+out_lmm <- jags(bdatal, inits, params, "model_lmm.txt", n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb)
+
+# A useful command is 
+# print(out_lmm, dig=3) 
+# however here we keep track of too many parameters (e.g. residuals,fitted values) thus will will avoid
+out_lmm$BUGSoutput$mean$sd^2
+out_lmm$BUGSoutput$mean$sd.site^2
+out_lmm$BUGSoutput$mean$sd.year^2
+total = out_lmm$BUGSoutput$mean$sd^2+ out_lmm$BUGSoutput$mean$sd.site^2+out_lmm$BUGSoutput$mean$sd.year^2
+out_lmm$BUGSoutput$mean$sd^2/total
+out_lmm$BUGSoutput$mean$sd.site^2/total
+out_lmm$BUGSoutput$mean$sd.year^2/total
+
+## Nota bene: possible to wire in such decomposition into the estimation, e.g. https://stateofther.github.io/post/rstan/WorkingWithStan_part2.html
+
+```
+
+So we found equal (mean) variance between sites and residuals, and less variance between years
+
+```{r trace-and-density-plots,eval=F}
+
+# traceplot() in native R2jags and other functions in library(coda)
+traceplot(out_lmm, varname = "sd")
+traceplot(out_lmm, varname = "popindex")
+
+#also possible to do 
+#traplot(out_lmm, parms = "sd") #but does not include sd.year, sd.site
+#traplot(out_lmm, parms = "popindex")
+
+denplot(out_lmm, parms = c("sd","sd.year","sd.site"))
+denplot(out_lmm, parms = "popindex")
+# other possible function
+# densplot() in library(coda)
+# densityplot()
+```
+
+Now we check the residuals
+
+```{r plotting-residuals}
+plot(out_lmm$BUGSoutput$mean$lambda,out_lmm$BUGSoutput$mean$resid, xlab="Fitted values", ylab="Residuals")
+```
+
+Note: do the same thing with lme4 ? Probably useful. In such a simple case there should not be any difference. 
+
+### Exploring the trend - first with the random effects model
+
+```{r popindex}
+# Plot population size index
+plot(year, out_lmm$BUGSoutput$mean$popindex, xlab = 'Year', ylab = 'Population index',
+     pch = 16, frame = FALSE, type= 'b') #ylim = c(500, 1000), 
+q02.5 = apply(out_lmm$BUGSoutput$sims.list$popindex,2,function(x){quantile(x,0.025)})
+q97.5 = apply(out_lmm$BUGSoutput$sims.list$popindex,2,function(x){quantile(x,0.975)})
+segments(year,q02.5, year, q97.5) #NB similar plot as before
+```
+
+Note: We could also have a simple LM model with *fixed* (non-random) effects: would not change much the estimation of the trend, but would not be able to estimate the variances, and some site effects might be poorly estimated. 
+
+## Moving on to a fixed and random effect model
+
+Here we want to include a general trend? Do we keep the year effect? 
+
+[Todo by students]
+
+```{r mixed-model}
+str(bdatal <- list(LC = LC[sel,], M = newM, yr = year - mean(year), T = ncol(LC[sel,])))
+
+cat(file = "model_lmm2.txt","
+    model {
+
+    # Priors
+    mu ~ dnorm(0, 0.001) # Intercept
+    for(i in 1:M){
+      site[i] ~ ...  # Random site effects
+      }
+    tau.site <- pow(sd.site, -2)
+    sd.site ~ dunif(0, 5)
+    for(t in 1:T){
+      year[t] ~ ... # Random year effects
+      }
+    tau.year <- pow(sd.year, -2)
+    sd.year ~ ...
+    tau <- pow(sd, -2)
+    sd ~ ...
+    
+    # Prior on the slope
+    gamma ~ ...
+
+    # Likelihood
+    for (i in 1:M){
+      for(t in 1:T){
+        LC[i,t] ~ ...
+        lambda[i,t] <- mu + ...
+        }
+      }
+    # Derived quantities
+    for(t in 1:T){
+      popindex[t] <- sum(lambda[,t])
+      }
+    }
+    ")
+
+# Initial values
+inits <- function() list(mu = rnorm(1), site = rnorm(newM), year = rnorm(length(year)),gamma=rnorm(1))
+
+# Parameters monitored
+params <- c("mu", "sd.site", "sd.year", "sd", "gamma", "popindex")
+
+# MCMC settings
+ni <- 10000; nt <- 10 ; nb <- 5000 ; nc <- 3 
+
+out_lmm2 <- jags(bdatal, inits, params, "model_lmm2.txt", n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb)
+head(print(out_lmm2))
+
+traceplot(out_lmm2, varname = "sd")
+traceplot(out_lmm2, varname = "gamma")
+
+denplot(out_lmm2, parms = c("sd","sd.year","sd.site"))
+denplot(out_lmm2, parms = "gamma")
+
+```
+
+We now remove the random year effect
+
+```{r mixed-model-bis}
+
+cat(file = "model_lmm3.txt","
+    model {
+    ... 
+    }
+    ")
+
+# Initial values
+inits <- function() list(mu = rnorm(1), site = rnorm(newM),gamma=rnorm(1))
+
+# Parameters monitored
+params <- c(...)
+
+# MCMC settings
+ni <- 10000; nt <- 10 ; nb <- 5000 ; nc <- 3 
+
+out_lmm3 <- jags(bdatal, inits, params, "model_lmm3.txt", n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb)
+
+
+traceplot(out_lmm3, varname = "sd")
+traceplot(out_lmm3, varname = "gamma")
+
+denplot(out_lmm3, parms = c("sd","sd.year","sd.site"))
+denplot(out_lmm3, parms = "gamma")
+
+```
+
+```{r comparison-gamma-estimates}
+out_lmm2$BUGSoutput$mean$gamma
+out_lmm3$BUGSoutput$mean$gamma
+q02.5_lmm2 = quantile(out_lmm2$BUGSoutput$sims.list$gamma,0.025)
+q97.5_lmm2 = quantile(out_lmm2$BUGSoutput$sims.list$gamma,0.975)
+q02.5_lmm3 = quantile(out_lmm3$BUGSoutput$sims.list$gamma,0.025)
+q97.5_lmm3 = quantile(out_lmm3$BUGSoutput$sims.list$gamma,0.975)
+c(q02.5_lmm2,q97.5_lmm2)  
+c(q02.5_lmm3,q97.5_lmm3)  
+## This is something handy from package MCMCplot
+#MCMCplot(out_lmm3,out_lmm2,params="gamma",ISB = TRUE, exact = FALSE)
+
+```
+
+Compare the predictions of models. 
+
+```{r}
+q02.5_lmm2 = apply(out_lmm2$BUGSoutput$sims.list$popindex,2,function(x){quantile(x,0.025)})
+q97.5_lmm2 = apply(out_lmm2$BUGSoutput$sims.list$popindex,2,function(x){quantile(x,0.975)})
+q02.5_lmm3 = apply(out_lmm3$BUGSoutput$sims.list$popindex,2,function(x){quantile(x,0.025)})
+q97.5_lmm3 = apply(out_lmm3$BUGSoutput$sims.list$popindex,2,function(x){quantile(x,0.975)})
+
+# Plot population index under models 1 and 2
+plot(year-0.1, out_lmm2$BUGSoutput$mean$popindex, cex = 2, pch = 16, xlab = 'Year',
+    ylab = 'Population index', col = 'red', type = 'b', frame = FALSE,
+    main = 'red: with-year-effects, blue:without ') #ylim = c(500, 1000), 
+segments(year-0.1, q02.5_lmm2, year-0.1, q97.5_lmm2, col = 'red')
+points(year+0.1, out_lmm3$BUGSoutput$mean$popindex, cex = 2, pch = 16, col = 'blue', type = 'b')
+segments(year+0.1, q02.5_lmm3, year+0.1, q97.5_lmm3, col = 'blue')
+
+```
+
