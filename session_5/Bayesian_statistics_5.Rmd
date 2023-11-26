@@ -1,0 +1,357 @@
+---
+title: "From LMMs to GLMMs"
+subtitle: "Bayesian statistics 5 -- mixed effects models and background for GLMMS"
+author: "Frédéric Barraquand (CNRS, IMB)"
+date: "28/11/2023"
+output: 
+  beamer_presentation:
+    theme: "Boadilla"
+urlcolor: blue
+
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, cache=FALSE)
+library(R2jags)
+```
+
+## Things that we learned the last time / will learn today
+
+Session 4
+
+- Random effects are random because we estimate their variances
+- Some people have proposed to call them *variance component effects*
+- In a Bayesian setup, the difference between fixed and random effects manifests in priors: ``alpha[i] ~ dnorm(0,0.01)`` or ``alpha[i] ~ dnorm(0,tau.alpha)``?
+- A prior on a quantity that could be considered a prior is a hyperprior
+
+Today (TD/practical on birds)
+
+>- Specifying mixed models with fixed and random effects (although the distinction between the two is tenuous in a Bayesian setup)
+>- Some more shrinkage $\rightarrow$ partial pooling of random effects coefficients that get pulled towards their mean
+>- Devise a model with a hierarchical structure
+>- Technical: Pairs of parameters can be correlated in the joint posterior, we should check whether they are so with pairwise posterior plots
+
+## What we will cover next today
+
+Correlation structures = advanced mixed modelling
+
+- Between different parameters (intercept, slope)
+- Between the same parameters but between/within groups
+
+Moving towards GLMs and GLMMs
+
+- Dealing with counts: Poisson distribution and Poisson GLMs
+- If time, Poisson GLMMs
+
+## Next time
+
+Poisson GLMMs on the crested tit example
+
+- Do our variance partitioning results on hold on the full dataset? 
+- Do our covariate results hold on the full dataset? 
+
+More GLMMs on counts
+
+## Correlation between random effects {.allowframebreaks}
+
+Back to Kéry (2010, chapter 12) where $Y_i$ is mass and $x_i$ is length, so that the regression gives body condition:
+
+\[Y_i = \alpha_{j[i]} + \beta_{j[i]} x_i + \epsilon_i  \]
+
+$\epsilon_i \sim \mathcal{N}(0,\sigma^2)$ i.i.d. and 
+$(\alpha_j, \beta_j) \sim \mathcal{N}([\mu_\alpha \mu_\beta],\Sigma)$. 
+
+with $\Sigma = \begin{pmatrix}
+\sigma_{\alpha}^2 & \sigma_{\alpha \beta}\\
+\sigma_{\alpha \beta} & \sigma_{\beta}^2
+\end{pmatrix}$ and $\sigma_{\alpha \beta} = {\color{blue} \rho} \sigma_\alpha \sigma_\beta$
+
+```{r mixed-effects-correl, echo=FALSE, include=FALSE}
+
+### 12.5.2. Data generation
+n.groups <- 56
+n.sample <- 10
+n <- n.groups * n.sample 
+pop <- gl(n = n.groups, k = n.sample)
+
+original.length <- runif(n, 45, 70) 	# Body length (cm)
+mn <- mean(original.length)
+sd <- sd(original.length)
+#cat("Mean and sd used to normalise.original length:", mn, sd, "\n\n")
+length <- (original.length - mn) / sd
+hist(length, col = "grey")
+
+Xmat <- model.matrix(~pop*length-1-length)
+print(Xmat[1:21,], dig = 2) 		# Print top 21 rows
+
+library(MASS)				# Load MASS
+?mvrnorm				# Check syntax
+
+intercept.mean <- 230			# Values for five hyperparameters
+intercept.sd <- 20
+slope.mean <- 60
+slope.sd <- 30
+#intercept.slope.covariance <- 10 #rho = 10/(20*30) = 1% (Marc's initial try)
+intercept.slope.covariance <- 200 #rho = 200/(20*30) = 33% 
+
+mu.vector <- c(intercept.mean, slope.mean)
+var.cova.matrix <- matrix(c(intercept.sd^2,intercept.slope.covariance, 
+intercept.slope.covariance, slope.sd^2),2,2)
+
+effects <- mvrnorm(n = n.groups, mu = mu.vector, Sigma = var.cova.matrix)
+effects					# Look at what we’ve created
+apply(effects, 2, mean)
+var(effects)
+
+intercept.effects <- effects[,1]
+slope.effects <- effects[,2]
+all.effects <- c(intercept.effects, slope.effects) # Put them all together
+
+lin.pred <- Xmat[,] %*% all.effects	# Value of lin.predictor
+eps <- rnorm(n = n, mean = 0, sd = 30)	# residuals 
+mass <- lin.pred + eps			# response = lin.pred + residual
+
+hist(mass, col = "grey")		# Inspect what we’ve created
+```
+
+Let's plot this with $\mu_\alpha=230, \mu_\beta=60,\sigma_\alpha=20, \sigma_\beta=30, \rho = 33\%$. 
+ 
+``` {r mixed-effects-correl-2}
+library("lattice")
+xyplot(mass ~ length | pop)
+```
+
+## Code for random effects model {.allowframebreaks}
+
+\small
+
+``` {r mixed-effects-correl-3}
+
+### 12.5.3. REML analysis using R
+library('lme4')
+lme.fit3 <- lmer(mass ~ length + (length | pop))
+
+### 12.5.4. Bayesian analysis using JAGS
+
+# Bundle data
+str(bdata <- list(mass = as.numeric(mass), pop = as.numeric(pop), 
+length = length, ngroups = max(as.numeric(pop)), n = n))
+```
+
+\tiny
+
+``` {r mixed-effects-correl-3-bis}
+# Specify model in BUGS language
+cat(file = "lme.model3.txt", "
+model {
+
+# Priors
+ for (j in 1:ngroups){
+    alpha[j] <- B[j,1]
+    beta[j] <- B[j,2]
+    B[j,1:2] ~ dmnorm(B.hat[j,], Tau.B[,])
+    B.hat[j,1] <- mu.int
+    B.hat[j,2] <- mu.slope
+}
+
+ mu.int ~ dnorm(0, 0.001)		# Hyperpriors for random intercepts
+ mu.slope ~ dnorm(0, 0.001)		# Hyperpriors for random slopes
+
+ Tau.B[1:2,1:2] <- inverse(Sigma.B[,])
+ Sigma.B[1,1] <- pow(sigma.int,2)
+ sigma.int ~ dunif(0, 100)		# SD of intercepts
+ Sigma.B[2,2] <- pow(sigma.slope,2)
+ sigma.slope ~ dunif(0, 100)		# SD of slopes
+ Sigma.B[1,2] <- rho*sigma.int*sigma.slope
+ Sigma.B[2,1] <- Sigma.B[1,2]
+ rho ~ dunif(-1,1)
+ covariance <- Sigma.B[1,2]
+
+ tau <- 1 / ( sigma * sigma)		# Residual
+ sigma ~ dunif(0, 100)			# Residual standard deviation
+
+# Likelihood
+ for (i in 1:n) {
+    mass[i] ~ dnorm(mu[i], tau)		# The 'residual' random variable
+    mu[i] <- alpha[pop[i]] + beta[pop[i]]* length[i]  # Expectation
+ }
+}
+")
+``` 
+
+## Results of RE model with correlation {.allowframebreaks}
+
+\scriptsize
+
+```{r mixed-effects-correl-4, echo=FALSE}
+
+# Inits function
+inits <- function(){ list(mu.int = rnorm(1, 0, 1), sigma.int = rlnorm(1), 
+mu.slope = rnorm(1, 0, 1), sigma.slope = rlnorm(1), rho = runif(1, -1, 1), sigma = rlnorm(1))}
+
+# Parameters to estimate
+params <- c("mu.int", "sigma.int", "mu.slope", 
+"sigma.slope", "rho", "covariance", "sigma")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out <- jags(bdata, inits, params, "lme.model3.txt", n.thin = nt, n.chains = nc, 
+n.burnin = nb, n.iter = ni)
+print(out, dig = 3)     # Bayesian analysis
+lme.fit3				# Frequentist analysis
+
+```
+
+
+## The mixed model -- theory to understand correlations
+
+In matrix notation, the mixed model writes 
+
+\[ \mathbf{y} = \mathbf{X} \boldsymbol{\beta} + \mathbf{Z} \mathbf{a} + \boldsymbol{\epsilon}  \]
+
+Convention here: simple bold for vectors, capital bold for matrices. 
+$\text{Cov}(\boldsymbol{\epsilon})$ and $\text{Cov}(\mathbf{a})$ are called
+[covariance matrices](https://en.wikipedia.org/wiki/Covariance_matrix), for the residuals and the random effects, respectively. 
+
+Possibility for correlations between random effects, as we've seen before, but random effects also generate correlations within groups. 
+
+## Genetics example: who's your mommy? 
+
+Let's assume that $Y_i$ is the phenotype of individual $i$. Like, size. In the population, we have cows that descend from their mommies $m=1,3,...,M$. Let's say $M=10$, we have $\mathbf{a} = (A_1,...,A_{10})$. \
+
+\[Y_{i} = \mu + b x_{i} + A_{m[i]} + \epsilon_i  \]
+
+- We assume that residuals are Gaussian iid. In math, $\epsilon_i \sim \mathcal{N}(0,\sigma^2)$ with $\text{Cov}(\epsilon_i,\epsilon_j) = \mathbb{V}(\epsilon_i) = \sigma^2$ for $j=i$ and $\text{Cov}(\epsilon_i,\epsilon_j) = 0$ for $j \neq i$. 
+- We assume that $x_i$ is the fixed effect of how much food the cow receives on average. 
+- We assume that mother phenotypes have themselves negligible correlation, so that $\text{Cov}(a_i,a_j) = 0$ for $j \neq i$ (possible to add multiple levels with grandma effects etc.)
+
+[Some background on quantitative genetics](https://royalsocietypublishing.org/doi/10.1098/rstb.2009.0203)
+
+## What is the covariance matrix for the overall random effect? 
+
+\[Y_{i} = \mu + b x_{i} + \eta_i \]
+with $\eta_j = A_{m[i]} + \epsilon_i$. 
+
+From rules on covariances, we can compute that 
+\[\text{Cov}(\eta_i,\eta_j) = \sigma^2 \mathbf{1}_{i=j} + \sigma_A^2 \mathbf{1}_{m[i]=m[j]} \]
+
+Let's write this on the board to get a better look.
+
+**Modelling residual covariance and adding random effects are usually two equivalent ways to add structure to your model.**
+(but often we add random effects because variance-covariance matrices are tricky beasts). 
+
+## Autocorrelated noise and distance-decay correlation structures 
+
+Let's imagine that we have a temporal effect $B_t =\varphi B_{t-1} + \zeta_t, \zeta_t \sim \mathcal{N}(0,\sigma^2)$. In this model, $\text{Corr}(B_t,B_{t-k}) = \varphi^k$ due to the properties of the AR(1) process. 
+
+Decay of correlation with distance in time. Seal population dynamics example in *Mixed effects models and extensions in ecology with r* by Zuur et al. (2009)
+
+You can have distance-decay of correlation in space too [advanced class]. 
+
+## Are my random effects nested or crossed? 
+
+This is more of a *question about data design than it is about modelling*. [A good post on Cross-Validated on that issue](https://stats.stackexchange.com/questions/228800/crossed-vs-nested-random-effects-how-do-they-differ-and-how-are-they-specified). 
+
+More references:
+
+[Nested by design: model fitting and interpretation in a mixed model era by 
+Schielzeth and Nakagawa](https://besjournals.onlinelibrary.wiley.com/doi/10.1111/j.2041-210x.2012.00251.x)
+
+[Data Analysis Using Regression and Multilevel/Hierarchical Models, by Gelman and Hill](http://www.stat.columbia.edu/~gelman/arm/)
+
+[A brief introduction to mixed effects modelling and multi-model inference in ecology, by Harrison et al. ](https://peerj.com/articles/4794/)
+
+## Poisson GLMMs -- beyond the Gaussian realm
+
+We want to be able to model our counts (of birds, cells, mechanical failures,...) including the many zeroes, ones and twos in them. \\
+
+Data for Poisson, Negative Binomial GLMMs and the likes:
+
+- ``data=c(0,0,1,2,3,0,8,2,3,...)``
+- and not ``data=c(146,827,22,38,49,167,0,332,92,...)``
+
+Before having complex models with random effects
+
+- Let's go back to simple GLMs
+- And for that to the Poisson distribution
+
+## The $\text{Poisson}(\lambda)$ distribution, $Y_i \sim \mathcal{P}(\lambda)$ {.allowframebreaks} 
+
+Mean and variance are linked in the [Poisson distribution](https://en.wikipedia.org/wiki/Poisson_distribution). 
+
+- Expectation $\mathbb{E}(Y_i) = \lambda$ 
+- Variance  $\mathbb{V}(Y_i) = \lambda$ 
+
+In general counts have usually $\mathbb{V}(Y_i) \propto \mathbb{E}(Y_i)$. That's why when we look at residuals of GLMs we use $\frac{y_i - \hat{y_i}}{\sqrt{\hat{y_i}}}$. Since $\text{SD}(Y_i) \propto \sqrt{\mathbb{E}(Y_i)}$. 
+
+Reminder, distribution for positive quantities: 
+
+In the [Gamma distribution](https://en.wikipedia.org/wiki/Gamma_distribution), $\mathbb{V}(Y_i) = a \theta^2 = \frac{1}{a} (\mathbb{E}(Y_i))^2$.
+
+[Log-normal](https://en.wikipedia.org/wiki/Log-normal_distribution), $\mathbb{V}(Y_i) = \text{stuff}(\sigma) \times \mathbb{E}(Y_i)^2$.
+
+
+```{r,echo=FALSE,fig.width=8,fig.height=6}
+y=seq(1,20,1)
+par(cex=1.5)
+plot(y, dpois(y, 1), type = "o", ylab = "P(Y=y)", main = "Poisson probability mass function",pch=19,col="orange")
+lines(y, dpois(y, 4), type = "o",pch=19,col="red")
+lines(y, dpois(y, 10), type = "o",pch=19,col="blue")
+legend(13, 0.35, legend=c("lambda = 1", "lambda = 4","lambda = 10"),
+       col=c("orange","red", "blue"), lty=1, cex=0.8)
+## Mention that CV = SD/mean = 1/sqrt{mean} 
+```
+
+
+## Poisson and other count distributions
+
+*Counts are special*. Different mean-variance scaling for Poisson. 
+
+$CV = SD/mean = \frac{1}{\sqrt{ \text{mean} }}$
+
+When counts are *overdispersed*, we use distributions in-between the Poisson and those shown before like the Negative Binomial. There are other options. 
+
+## GLM, the basic regression model
+
+\[ Y_i \sim \mathcal{P}(\lambda_i) \]
+with 
+\[ \lambda_i = g^{-1}(a + b x_i) \]
+or again
+\[ g(\lambda_i) = a + b x_i \]
+
+\onslide<2->
+Typically the *link function* $g=\log$ and 
+\[ \lambda_i = \exp(a + b x_i) \]
+or again
+\[ \log(\lambda_i) = a + b x_i \]
+
+\onslide<3->
+Thus this is by design close to log-transforming the data, but you have the extra Poisson variation. 
+
+\onslide<4-> Extra question: should you add noise $\log(\lambda_i) = a + b x_i + \epsilon_i$? 
+
+## Heavy debates in ecology and evolution
+
+on whether one should log-transforming count data or use GLMs: 
+
+>- [O'Hara and Kotze](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/j.2041-210X.2010.00021.x) said in 2010 that we always should use GLMs. 
+>- Then [Ives showed that if you just want to know which coefficients have an effect, you might do better with log-transformation](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.12386). 
+>- [Warton et al. further showed that it depends and provided advice on how to choose](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.12552).
+ (if you have very very small counts so $E(y)<1$ you can't get away with it)
+>- Finally in 2020 [Morrissey and Ruxton showed a caveat in the paper that started the debate](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.13372). 
+>- Literature auto-correct time = 10 years. Beware! 
+
+## So what should I pick? 
+
+- You have very small counts: GLMs
+- You don't, depends on what you want to do 
+  1. You want to estimate coefficients to find effects. You can log-transform. 
+  2. You want to simulate from the model $\rightarrow$ log-transformed data won't give you counts with the right variance. You need the GLMs.  
+  
+\onslide<2->  
+- Bayesian models are *extra practical to simulate data under the fitted model*, because you can simulate at the same time as you fit 
+- This is even how you diagnose your model fit! *Posterior predictive checks*. 
+
+We will see this next time.  

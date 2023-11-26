@@ -1,0 +1,34 @@
+
+model {
+
+# Priors
+ for (j in 1:ngroups){
+    alpha[j] <- B[j,1]
+    beta[j] <- B[j,2]
+    B[j,1:2] ~ dmnorm(B.hat[j,], Tau.B[,])
+    B.hat[j,1] <- mu.int
+    B.hat[j,2] <- mu.slope
+}
+
+ mu.int ~ dnorm(0, 0.001)		# Hyperpriors for random intercepts
+ mu.slope ~ dnorm(0, 0.001)		# Hyperpriors for random slopes
+
+ Tau.B[1:2,1:2] <- inverse(Sigma.B[,])
+ Sigma.B[1,1] <- pow(sigma.int,2)
+ sigma.int ~ dunif(0, 100)		# SD of intercepts
+ Sigma.B[2,2] <- pow(sigma.slope,2)
+ sigma.slope ~ dunif(0, 100)		# SD of slopes
+ Sigma.B[1,2] <- rho*sigma.int*sigma.slope
+ Sigma.B[2,1] <- Sigma.B[1,2]
+ rho ~ dunif(-1,1)
+ covariance <- Sigma.B[1,2]
+
+ tau <- 1 / ( sigma * sigma)		# Residual
+ sigma ~ dunif(0, 100)			# Residual standard deviation
+
+# Likelihood
+ for (i in 1:n) {
+    mass[i] ~ dnorm(mu[i], tau)		# The 'residual' random variable
+    mu[i] <- alpha[pop[i]] + beta[pop[i]]* length[i]  # Expectation
+ }
+}

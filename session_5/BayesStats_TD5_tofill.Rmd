@@ -1,0 +1,394 @@
+---
+title: "Analysis of Swiss Crested Tits population dynamics II"
+author: "F. Barraquand - adapted from Kéry and Royle's Applied hierarchical modeling in Ecology"
+date: "November 28, 2023"
+output:
+  html_document:
+    highlight: textmate
+    theme: united
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+```{r setup, include=FALSE}
+options(width = 300)
+knitr::opts_chunk$set(cache = FALSE) 
+#library(jagsUI)
+library(R2jags)
+library(knitr)
+library(ggmcmc)
+
+```
+
+```{r details about code, include=FALSE,eval=FALSE}
+#  --------------- Original source: ---------------------------------------  
+#   Applied hierarchical modeling in ecology
+#   Modeling distribution, abundance and species richness using R and BUGS
+#   Volume 2: Dynamic and Advanced models
+#   Marc Kéry & J. Andy Royle
+# Chapter 1 : RELATIVE ABUNDANCE MODELS FOR POPULATION DYNAMICS
+# =============================================================
+# Code from proofs dated 2020-08-18
+# see https://github.com/mikemeredith/AHM_code
+#  ---------------modified by FB starting 2021-05-23 ----------------------  
+``` 
+
+# Linear (mixed) models
+
+## Using more covariates
+
+We re-execute the previous code to load the data and get the covariates
+
+```{r load-and-plot-data}
+dat<-read.csv("../session_4/crestedTit.csv")
+#str(dat)
+dat$X<-NULL
+# head(dat)
+## Note: date991 is the date for year 99 and 1st survey, date992 second survey etc. 
+C <- as.matrix(dat[,6:23]) # grab counts 1999:2016
+#head(C)
+LC <- log(C+1)
+year <- 1999:2016
+
+```
+
+
+```{r data-wrangling}
+# Grab data for survey dates (for 2-3 surveys per year) and for duration
+# Put into 3D array first, then summarize over reps within a year
+nsite <- nrow(C)
+nyear <- length(year)
+datetmp <- as.matrix(dat[,24:77])
+datefull <- array(datetmp, dim = c(nsite, 3, nyear))
+durtmp <- as.matrix(dat[,78:131])
+durfull <- array(durtmp, dim = c(nsite, 3, nyear))
+
+# Get mean date of survey and mean survey duration for each site and year
+date <- apply(datefull, c(1,3), mean, na.rm = TRUE)
+dur <- apply(durfull, c(1,3), mean, na.rm = TRUE)
+date[date == 'NaN'] <- NA
+dur[dur == 'NaN'] <- NA
+```
+
+Now we would like to add to the previous code a model that includes not only site and year effects but also:
+
+* The covariate ``forest``, which is forest cover
+* The covariate ``elev``, which is elevation (altitude)
+* The covariates ``date``, ``dur`` (duration of survey), ``twosurveys`` (whether there's been two or three surveys). These covariates affect the *observation* process rather than true bird abundance. 
+
+```{r format-covariates}
+# Scale some covariates and mean-impute missing values in them
+elev.sc <- scale(dat$elev)       # elevation of site
+forest.sc <- scale(dat$forest)   # forest cover of site
+date.sc <- scale(date)
+date.sc[is.na(date.sc)] <- 0           # mean impute
+dur.sc <- scale(dur)
+dur.sc[is.na(dur.sc)] <- 0             # mean impute
+
+# Check number of zero years in all sites
+nzero <- apply(C, 1, function(x) sum(x == 0, na.rm = TRUE))
+sum(nzero <= 1)   # 97 sites with at most 1 zero year
+# Bundle data with restriction on sites
+sel <- nzero <= 1 # Select sites with <= 1 zero count
+newM <- sum(sel)  # Define new number of sites
+
+# Bundle and summarize data
+str(bdatal <- list(LC=LC[sel,], M = newM, T = ncol(LC[sel,]), yr = (year - mean(year))/sd(year), elev = elev.sc[sel,], forest = forest.sc[sel,], date = date.sc[sel,], dur = dur.sc[sel,],
+    twosurveys = as.numeric(dat$nsurveys[sel] == 2)) )
+```
+
+It is a bit unclear whether the relationships to elevation and date are linear. We can assume a polynomial of order 2. 
+(actually this could be discussed for forest cover also)
+
+Tasks:
+
+1. Write down the model
+2. Implement it into code
+
+### The model 
+
+$$ Y_{itk} = \mu + A_i + B_t + \gamma \text{yr}_t +
+\theta_1 \text{elev}_i + \theta_2 \text{elev}_i^2 +
+\theta_3 \text{forest}_i + \theta_4 \text{date}_{i,t} +
+\theta_5 \text{date}_{i,t}^2 + \theta_6 \text{dur}_{i,t} +
+\theta_7 \text{twosurveys}_i +
+\epsilon_{itk}, \; \epsilon_{itk} \sim \mathcal{N}(0,\sigma^2)$$ with $A_i \sim \mathcal{N}(0,\sigma_{\text{site}}^2)$ and $B_t ~ \sim \mathcal{N}(0,\sigma_{\text{year}}^2)$. 
+
+Note: unclear why $\text{twosurveys}_i$ and not $\text{twosurveys}_{i,t}$
+
+### The code
+
+```{r mixed-model}
+
+cat(file = "model_lmm4.txt","
+    model {
+
+    ########### Priors ################
+
+    ############ Likelihood ###########
+
+    ############  Derived quantities ############ 
+    for (t in 1:T){
+      popindex[t] <- sum(lambda[,t])
+      }
+    }
+    ")
+
+# Initial values
+inits <- function() list(mu = rnorm(1), site = rnorm(newM), year = rnorm(length(year)),gamma=rnorm(1),theta=rnorm(7))
+
+# Parameters monitored
+params <- c("mu", "sd.site", "sd.year", "sd", "gamma", "theta","popindex")
+
+# MCMC settings
+na <- 1000 ; ni <- 15000; nt <- 10 ; nb <- 5000 ; nc <- 3 # also core number for parallel computation with jagsUI
+
+#to see progress do not use parallel computation (slower)
+# for jagsUI
+# out_lmm4 <- jags(bdatal, inits, params, "model_lmm4.txt", n.adapt = na, n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb, parallel = TRUE)
+# for R2jags
+out_lmm4 <- jags(bdatal, inits, params, "model_lmm4.txt", n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb)
+head(print(out_lmm4))
+
+#S<-ggs(out_lmm4$samples) #jagsUI
+S<-ggs(as.mcmc(out_lmm4)) #R2jags
+ggs_density(S,family = "sd")
+#ggs_traceplot(S,family = "sd")
+#ggs_density(S,family = "gamma")
+#ggs_traceplot(S,family = "gamma")
+ggs_density(S,family = "theta",hpd=TRUE)
+ggs_traceplot(S,family = "theta")
+ggs_pairs(S,family = "theta")
+
+#effect_elev = function(x){return(out_lmm4$mean$theta[1]*x+out_lmm4$mean$theta[2]*x^2)}
+effect_elev = function(x){return(out_lmm4$BUGSoutput$mean$theta[1]*x+out_lmm4$BUGSoutput$mean$theta[2]*x^2)}
+
+curve(effect_elev,from=min(elev.sc),to=max(elev.sc))
+
+```
+
+We see that
+
+* forest cover has a ... effect 
+* there are more birds at ...-altitude
+* date has likely ... effect
+* duration ...
+* two or three surveys ...
+
+## What does affect the trend? 
+
+Here we would like to investigate what are the main factors changing the yearly trend. 
+
+### Can we infer a site-level trend? 
+
+[Discussion]
+
+...
+
+[Exercise: implement a model with such site-level trends]
+
+Here the yearly trends for each site will be drawn from a distribution so that $gamma_i \sim \mathcal{N}(\mu_{\gamma}, \sigma^2_{\gamma})$. Through $\sigma^2_{\gamma}$ we control how variable the trends can be among sites. A strong prior on $\sigma^2_{\gamma}$, keeping it small, will mean that the site-level trends are driven to stay similar to each other. 
+
+```{r mixed-model-variable-trend}
+
+cat(file = "model_lmm5.txt","
+    model {
+
+    # Priors
+     ...
+     
+    # Likelihood 
+     ...
+     
+    # Derived quantities
+    for(t in 1:T){
+      popindex[t] <- sum(lambda[,t])
+      }
+    }
+    ")
+
+# Initial values
+inits <- function() list(mu = rnorm(1), site = rnorm(newM), year = rnorm(length(year)),gamma=rnorm(newM))
+
+# Parameters monitored
+params <- c("mu", "sd.site", "sd.year", "sd", "mu.gamma","sd.gamma","gamma","popindex")
+
+# MCMC settings
+na <- 1000 ; ni <- 15000; nt <- 10 ; nb <- 5000 ; nc <- 3 # also core number for parallel computation with jagsUI
+
+#to see progress do not use parallel computation (slower)
+# out_lmm5<- jags(bdatal, inits, params, "model_lmm5.txt", n.adapt = na, n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb, parallel = TRUE) # jagsUI
+out_lmm5<- jags(bdatal, inits, params, "model_lmm5.txt", n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb) #R2jags
+
+head(print(out_lmm5))
+
+```
+
+Now without the partial pooling
+
+```{r mixed-model-variable-trend-bis}
+
+cat(file = "model_lmm5_bis.txt","
+    model {
+
+    # Priors
+
+    # Likelihood
+
+    # Derived quantities
+    for(t in 1:T){
+      popindex[t] <- sum(lambda[,t])
+      }
+    }
+    ")
+
+# Initial values
+inits <- function() list(mu = rnorm(1), site = rnorm(newM), year = rnorm(length(year)),gamma=rnorm(newM))
+
+# Parameters monitored
+params <- c("mu", "sd.site", "sd.year", "sd", "gamma","popindex")
+
+# MCMC settings
+na <- 1000 ; ni <- 15000; nt <- 10 ; nb <- 5000 ; nc <- 3 # core number for parallel computation
+
+# jags UI -- to see progress do not use parallel computation (slower)
+# out_lmm5_bis<- jags(bdatal, inits, params, "model_lmm5_bis.txt", n.adapt = na, n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb, parallel = TRUE)
+out_lmm5_bis<- jags(bdatal, inits, params, "model_lmm5_bis.txt", n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb) #R2jags
+head(print(out_lmm5_bis))
+
+#plot(out_lmm5_bis$mean$gamma,out_lmm5$mean$gamma)
+#abline(a=0,b=1,col="blue")
+#abline(lm(out_lmm5$mean$gamma~out_lmm5_bis$mean$gamma),col="red")
+#lm(out_lmm5$mean$gamma~out_lmm5_bis$mean$gamma)
+plot(out_lmm5_bis$BUGSoutput$mean$gamma,out_lmm5$BUGSoutput$mean$gamma)
+abline(a=0,b=1,col="blue")
+abline(lm(out_lmm5$BUGSoutput$mean$gamma~out_lmm5_bis$BUGSoutput$mean$gamma),col="red")
+lm(out_lmm5$BUGSoutput$mean$gamma~out_lmm5_bis$BUGSoutput$mean$gamma)
+
+## Some skrinkage
+```
+
+
+[Follow-up on exercise]
+
+* Plot the trends
+* Examine different priors, e.g. exp(1). 
+
+### Setting effects of forest cover and elevation on trends. 
+
+Now we ask the question of whether the trends themselves could vary with forest cover and altitude. Are crested tits on the rise in more forested habitats or higher up the mountains? It is not a trivial question: birds could be more abundant in general at mid-altitude, and yet increase more at high altitude because they are less disturbed there. 
+
+From the previous exercise we can eliminate some covariates on abundance: date and twosurveys. 
+
+[Exercise: write down the model adding effects of elevation on the local trend gamma[i]. Keep the effect of forest cover and elevation on abundance, i.e. start from previous lmm4]
+
+$$ Y_{itk} = \mu + A_i + B_t + \gamma_i \text{yr}_t +
+\theta_1 \text{elev}_i + \theta_2 \text{elev}_i^2 +
+\theta_3 \text{forest}_i + \theta_4 \text{dur}_{i,t} +
+\epsilon_{itk}, \; \epsilon_{itk} \sim \mathcal{N}(0,\sigma^2)$$ with $A_i \sim \mathcal{N}(0,\sigma_{\text{site}}^2)$ and $B_t ~ \sim \mathcal{N}(0,\sigma_{\text{year}}^2)$. With now the added $$\gamma_i \sim \mathcal{N}(\mu_{\gamma,i},\sigma_\gamma^2)$$ and 
+$$ \mu_{\gamma,i} = \alpha + \beta_1 \text{elev}_i + \beta_2 \text{elev}_i^2$$. 
+
+```{r mixed-model-highly-hierarchical}
+
+cat(file = "model_lmm6.txt","
+    model {
+
+    ########### Priors ################
+
+    # Intercept 
+    ...
+    
+    # Site 
+    ...
+    
+    # Year - random
+    ...
+    
+    # Other covariate effects on abundance
+    for (i in 1:4){
+      theta[i] ~ dnorm(0, 0.1)      
+    }
+
+    # Priors on trend parameters 
+     alpha.mu.gamma ~ dnorm(0, 0.1)   # intercept of mean trend on elev
+     beta1.mu.gamma ~ dnorm(0, 0.1)   # lin effect of elev on trend
+     beta2.mu.gamma ~ dnorm(0, 0.1)   # quad effect of elev on trend
+     tau.gamma <- pow(sd.gamma, -2)
+     sd.gamma ~ dunif(0, 0.2)         # Variability of trends (we can discuss that prior - too small?)
+    
+    ############ Likelihood ###########
+
+    # Linear model for effect of elevation on expectation of trends
+    for(i in 1:M){ 
+    ...
+       }
+     
+    for (i in 1:M){
+      for(t in 1:T){
+    ...
+     }
+    }
+
+    ############  Derived quantities ############ 
+    for (t in 1:T){
+      popindex[t] <- sum(lambda[,t])
+      }
+    }
+    ")
+
+# Initial values
+inits <- function() list(mu = rnorm(1), site = rnorm(newM), year = rnorm(length(year)),gamma=rnorm(newM))
+
+# Parameters monitored
+params <- c("mu", "sd.site", "sd.year", "sd", "alpha.mu.gamma","beta1.mu.gamma","beta2.mu.gamma","sd.gamma","theta")
+
+# MCMC settings
+na <- 1000 ; ni <- 15000; nt <- 10 ; nb <- 5000 ; nc <- 3 # core number for parallel computation
+
+#to see progress do not use parallel computation (slower)
+# out_lmm6<- jags(bdatal, inits, params, "model_lmm6.txt", n.adapt = na, n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb, parallel = TRUE) #jagsUI
+out_lmm6<- jags(bdatal, inits, params, "model_lmm6.txt", n.chains = nc,n.thin = nt, n.iter = ni, n.burnin = nb) #R2jags
+
+head(print(out_lmm6))
+
+#S<-ggs(out_lmm6$samples)
+S<-ggs(as.mcmc(out_lmm6))
+ggs_density(S,family = "sd")
+ggs_density(S,family = "gamma")
+ggs_traceplot(S,family = "gamma")
+
+ggs_density(S,family = "theta",hpd=TRUE)
+ggs_traceplot(S,family = "theta")
+ggs_pairs(S) #check for correlations between gamma parameters and theta parameters (can we identify both separately?)
+
+par(mfrow=c(2,1))
+
+# effect_elev = function(x){return(out_lmm6$mean$ beta1.mu.gamma*x+out_lmm6$mean$beta2.mu.gamma*x^2)}
+# curve(effect_elev,from=min(elev.sc),to=max(elev.sc),xlab="Stdized elevation",ylab="effect on temporal trend")
+# 
+# # do the other effects on abundance stay similar? 
+# effect_elev_trend = function(x){return(out_lmm6$mean$theta[1]*x+out_lmm6$mean$theta[2]*x^2)}
+# curve(effect_elev_trend,from=min(elev.sc),to=max(elev.sc),xlab="Stdized elevation",ylab="effect on abundance")
+
+
+effect_elev = function(x){return(out_lmm6$BUGSoutput$mean$ beta1.mu.gamma*x+out_lmm6$BUGSoutput$mean$beta2.mu.gamma*x^2)}
+curve(effect_elev,from=min(elev.sc),to=max(elev.sc),xlab="Stdized elevation",ylab="effect on temporal trend")
+
+# do the other effects on abundance stay similar? 
+effect_elev_trend = function(x){return(out_lmm6$BUGSoutput$mean$theta[1]*x+out_lmm6$BUGSoutput$mean$theta[2]*x^2)}
+curve(effect_elev_trend,from=min(elev.sc),to=max(elev.sc),xlab="Stdized elevation",ylab="effect on abundance")
+
+par(mfrow=c(1,1))
+```
+
+We found ...
+
+[Note: we could try to do some model selection or evaluation of model to see whether the "best" model includes or excludes the effect of covariates on the trends but this would be advanced material, since Bayesian model selection has its quirks $\rightarrow$ end session .]
+
+
+
