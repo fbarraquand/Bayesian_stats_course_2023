@@ -128,15 +128,44 @@ Note: unclear why $\text{twosurveys}_i$ and not $\text{twosurveys}_{i,t}$
 cat(file = "model_lmm4.txt","
     model {
 
-    ########### Priors ################
+    ######## Priors
+    mu ~ dnorm(0, 0.001) # Intercept
+    for (k in 1:7){theta[k] ~ dnorm(0,0.1)}
+    
+    ####### Random effects
+    for(i in 1:M){
+      site[i] ~ dnorm(0,tau.site)  # Random site effects
+      }
+    tau.site <- pow(sd.site, -2)
+    sd.site ~ dunif(0, 5)
+    
+    for(t in 1:T){
+      year[t] ~ dnorm(0,tau.year) # Random year effects
+      }
+    tau.year <- pow(sd.year, -2)
+    sd.year ~ dunif(0,3)
+    
+    tau <- pow(sd, -2)
+    sd ~ dunif(0,3)
+    
+    # Prior on the slope
+    gamma ~ dnorm(0,0.1)
 
-    ############ Likelihood ###########
-
-    ############  Derived quantities ############ 
-    for (t in 1:T){
+    ############ Likelihood
+    for (i in 1:M){
+      for(t in 1:T){
+        LC[i,t] ~ dnorm(lambda[i,t],tau)
+        lambda[i,t] <- mu + site[i] + year[t] + gamma * yr[t] +
+        theta[1]*elev[i] + theta[2]*elev[i]^2 + theta[3]*forest[i]+
+        theta[4]*date[i,t]+ theta[5]*date[i,t]^2 + theta[6]*dur[i,t]+ theta[7]*twosurveys[i] # mixed model
+        }
+      }
+    # Derived quantities
+    for(t in 1:T){
       popindex[t] <- sum(lambda[,t])
       }
     }
+
     ")
 
 # Initial values
@@ -174,11 +203,11 @@ curve(effect_elev,from=min(elev.sc),to=max(elev.sc))
 
 We see that
 
-* forest cover has a ... effect 
-* there are more birds at ...-altitude
-* date has likely ... effect
-* duration ...
-* two or three surveys ...
+* forest cover has a positive effect 
+* there are more birds at mid-to-high-altitude
+* date has likely null effect
+* duration has a positive effects
+* two or three surveys does not matter much. 
 
 ## What does affect the trend? 
 
@@ -198,25 +227,55 @@ Here the yearly trends for each site will be drawn from a distribution so that $
 
 cat(file = "model_lmm5.txt","
     model {
+    
+    ######## Priors
+    mu ~ dnorm(0, 0.001) # Intercept
+    for (k in 1:7){theta[k] ~ dnorm(0,0.1)}
+    
+    ####### Random effects
+    for(i in 1:M){
+      site[i] ~ dnorm(0,tau.site)  # Random site effects
+      gamma[i] ~ dnorm(mu.gamma,tau.gamma)
+      }
+    tau.site <- pow(sd.site, -2)
+    sd.site ~ dunif(0, 5)
+    tau.gamma <- pow(sd.gamma, -2)
+    sd.gamma ~ dunif(0, 3)
+    
+    for(t in 1:T){
+      year[t] ~ dnorm(0,tau.year) # Random year effects
+      }
+    tau.year <- pow(sd.year, -2)
+    sd.year ~ dunif(0,3)
+    
+    tau <- pow(sd, -2)
+    sd ~ dunif(0,3)
+    
+    # Hyperpriors
+    mu.gamma ~ dnorm(0,0.1)
 
-    # Priors
-     ...
-     
-    # Likelihood 
-     ...
-     
+    ############ Likelihood
+    for (i in 1:M){
+      for(t in 1:T){
+        LC[i,t] ~ dnorm(lambda[i,t],tau)
+        lambda[i,t] <- mu + site[i] + year[t] + gamma[i] * yr[t] +
+        theta[1]*elev[i] + theta[2]*elev[i]^2 + theta[3]*forest[i]+
+        theta[4]*date[i,t]+ theta[5]*date[i,t]^2 + theta[6]*dur[i,t]+ theta[7]*twosurveys[i] # mixed model
+        }
+      }
     # Derived quantities
     for(t in 1:T){
       popindex[t] <- sum(lambda[,t])
       }
     }
+
     ")
 
 # Initial values
 inits <- function() list(mu = rnorm(1), site = rnorm(newM), year = rnorm(length(year)),gamma=rnorm(newM))
 
 # Parameters monitored
-params <- c("mu", "sd.site", "sd.year", "sd", "mu.gamma","sd.gamma","gamma","popindex")
+params <- c("mu", "sd.site", "sd.year", "sd","gamma", "mu.gamma","sd.gamma","popindex")
 
 # MCMC settings
 na <- 1000 ; ni <- 15000; nt <- 10 ; nb <- 5000 ; nc <- 3 # also core number for parallel computation with jagsUI
@@ -315,7 +374,7 @@ cat(file = "model_lmm6.txt","
     }
 
     # Priors on trend parameters 
-     alpha.mu.gamma ~ dnorm(0, 0.1)   # intercept of mean trend on elev
+     beta0.mu.gamma ~ dnorm(0, 0.1)   # intercept of mean trend on elev
      beta1.mu.gamma ~ dnorm(0, 0.1)   # lin effect of elev on trend
      beta2.mu.gamma ~ dnorm(0, 0.1)   # quad effect of elev on trend
      tau.gamma <- pow(sd.gamma, -2)

@@ -1,0 +1,42 @@
+
+    model {
+
+    ######## Priors
+    mu ~ dnorm(0, 0.001) # Intercept
+    for (k in 1:7){theta[k] ~ dnorm(0,0.1)}
+    
+    ####### Random effects
+    for(i in 1:M){
+      site[i] ~ dnorm(0,tau.site)  # Random site effects
+      }
+    tau.site <- pow(sd.site, -2)
+    sd.site ~ dunif(0, 5)
+    
+    for(t in 1:T){
+      year[t] ~ dnorm(0,tau.year) # Random year effects
+      }
+    tau.year <- pow(sd.year, -2)
+    sd.year ~ dunif(0,3)
+    
+    tau <- pow(sd, -2)
+    sd ~ dunif(0,3)
+    
+    # Prior on the slope
+    gamma ~ dnorm(0,0.1)
+
+    ############ Likelihood
+    for (i in 1:M){
+      for(t in 1:T){
+        LC[i,t] ~ dnorm(lambda[i,t],tau)
+        lambda[i,t] <- mu + site[i] + year[t] + gamma * yr[t] +
+        theta[1]*elev[i] + theta[2]*elev[i]^2 + theta[3]*forest[i]+
+        theta[4]*date[i,t]+ theta[5]*date[i,t]^2 + theta[6]*dur[i,t]+ theta[7]*twosurveys[i] # mixed model
+        }
+      }
+    # Derived quantities
+    for(t in 1:T){
+      popindex[t] <- sum(lambda[,t])
+      }
+    }
+
+    
