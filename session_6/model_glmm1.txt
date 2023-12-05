@@ -1,5 +1,39 @@
 
     model {
     
+    ## Priors
+    mu ~ dnorm(0,0.001)
+    
+    # Site
+    for (i in 1:M){
+      site[i] ~ dnorm(0,tau.site)
+    }
+    tau.site <-pow(sd.site,-2)
+    sd.site ~ dunif(0,3)
+    
+    # Year
+    for (t in 1:T){
+      year[t] ~ dnorm(0,tau.year)
+    }
+    tau.year <-pow(sd.year,-2)
+    sd.year ~ dunif(0,3)
+    
+    # Residual variation
+    tau<-pow(sd,-2)
+    sd ~ dunif(0,3)
+    
+    ## Likelihood
+    for (i in 1:M){
+      for (t in 1:T){
+        C[i,t] ~ dpois(lambda[i,t])
+        epsilon[i,t] ~ dnorm(0,tau)
+        log(lambda[i,t])<- mu + site[i] + year[t] + epsilon[i,t]
+      }
+    }
+    
+    ## Derived quantities
+    for(t in 1:T){
+    popindex[t] <- sum(lambda[,t])
+      }
     }
     

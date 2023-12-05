@@ -158,12 +158,46 @@ Coding the GLMM
 cat(file = "model_glmm1.txt","
     model {
     
+    ## Priors
+    mu ~ dnorm(0,0.001)
+    
+    # Site
+    for (i in 1:M){
+      site[i] ~ dnorm(0,tau.site)
+    }
+    tau.site <-pow(sd.site,-2)
+    sd.site ~ dunif(0,3)
+    
+    # Year
+    for (t in 1:T){
+      year[t] ~ dnorm(0,tau.year)
+    }
+    tau.year <-pow(sd.year,-2)
+    sd.year ~ dunif(0,3)
+    
+    # Residual variation
+    tau<-pow(sd,-2)
+    sd ~ dunif(0,3)
+    
+    ## Likelihood
+    for (i in 1:M){
+      for (t in 1:T){
+        C[i,t] ~ dpois(lambda[i,t])
+        epsilon[i,t] ~ dnorm(0,tau)
+        log(lambda[i,t])<- mu + site[i] + year[t] + epsilon[i,t]
+      }
+    }
+    
+    ## Derived quantities
+    for(t in 1:T){
+    popindex[t] <- sum(lambda[,t])
+      }
     }
     ")
 
 # Initial values
 inits <- function() list(mu = rnorm(1), site = rnorm(M), year = rnorm(T),
-    eps = array(1, dim=c(M, T)))
+    epsilon = array(1, dim=c(M, T)))
 
 # Parameters monitored
 params <- c("mu", "sd.site", "sd.year", "sd", "site", "year", "popindex")
@@ -208,7 +242,7 @@ out2$BUGSoutput$mean$sd.year^2/total
 
 [check effects of estimates - do they change much compared to previous LMMs?]
 
-... of the variation is now due to the sites. Is that a large change? If so what could it be due to? 
+98% of the variation is now due to the sites. Is that a large change? If so what could it be due to? Different model or different data set. 
 
 Let's try to select the previous 97 sites to compare.  
 
@@ -234,7 +268,6 @@ str(bdata <- list(C = C[sel,], M = newM, T = ncol(C[sel,])))
 ```{r glmm1-bis}
 
 inits <- function() list(site = rnorm(nrow(C[sel,])), year = c(NA, rnorm(ncol(C[sel,])-1)))
-
 
 # Call JAGS (ART 4 min), check convergence and summarize posteriors
 #out2 <- jags(bdata, inits, params, "model_glmm1.txt", n.adapt = na, n.chains = nc,    n.thin = nt, n.iter = ni, n.burnin = nb, parallel = TRUE)
@@ -264,7 +297,7 @@ out2$BUGSoutput$mean$sd.year^2/total
 
 ```
 
-Now we've got ...% of the variance explained by the site. 
+Now we've got 78% of the variance explained by the site. A lot of the change in the percentage of explained variance can be explained by the change in model, although changing the dataset for the full dataset contributes too. 
 
 ## "Complete" previous model, Poisson log-normal version. 
 
