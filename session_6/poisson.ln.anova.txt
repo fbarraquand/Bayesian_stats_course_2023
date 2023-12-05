@@ -1,0 +1,28 @@
+
+model {
+
+# Priors
+ for (j in 1:ngroups){alpha[j] ~ dnorm(1,0.1)}
+ sigma ~ dexp(1)
+ tau <-pow(sigma,-2)
+ sigma2 <-pow(sigma,2)
+
+# Likelihood
+ for (t in 1:T){
+    for (i in 1:ngroups){
+      count[t,i] ~ dpois(lambda[t,i])
+      epsilon[t,i] ~ dnorm(0,tau)
+       log(lambda[t,i]) <- alpha[i] + epsilon[t,i]
+    }
+ }
+ 
+# Derived quantity
+mu <- mean(alpha)
+ for (t in 1:T){
+    for (i in 1:ngroups){
+       epsilon.rep[t,i] ~ dnorm(0,tau)
+       count.rep[t,i] ~ dpois(exp(alpha[i]+epsilon.rep[t,i]))
+    }
+ }
+  
+}

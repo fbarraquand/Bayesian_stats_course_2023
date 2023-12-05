@@ -1,0 +1,21 @@
+
+model {
+
+# Priors
+ for (j in 1:ngroups){alpha[j] ~ dnorm(1,0.1)}
+
+# Likelihood
+ for (t in 1:T){
+    for (i in 1:ngroups){
+      count[t,i] ~ dpois(lambda[t,i])
+       log(lambda[t,i]) <- alpha[i]
+    }
+ }
+ 
+# Derived quantity
+mu <- mean(alpha)
+for (i in 1:ngroups){
+    lambdaS[i] <- sum(lambda[1:T,i])
+}
+  
+}

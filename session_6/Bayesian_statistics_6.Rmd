@@ -1,0 +1,442 @@
+---
+title: "GLM(M)s for counts"
+subtitle: "Bayesian statistics 6 -- generalized linear models for count data"
+author: "Frédéric Barraquand (CNRS, IMB)"
+date: "05/12/2023"
+output: 
+  beamer_presentation:
+    theme: "Boadilla"
+urlcolor: blue
+header-includes:
+- \usepackage{caption}
+- \captionsetup[figure]{labelformat=empty}
+
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, cache=FALSE)
+library(R2jags)
+```
+
+## Some things that we learned the last time
+
+- You can use GLMs to model counts. 
+  1. If you want to explain *and* counts are relatively large, you can also transform. 
+  2. If your want to predict or counts are small, you have to use GLMs. 
+- The Poisson distribution is useful to model *small* counts
+- A main property is that mean = variance, so small counts have large CV. 
+- Classical *link function* is the log-link, so Poisson regression looks like $Y_i \sim \mathcal{P} (\exp(a + b x_i + \text{[stuff]}))$
+
+## The law of small numbers
+
+Book written by [Władysław Bortkiewicz](https://en.wikipedia.org/wiki/Ladislaus_Bortkiewicz) in 1898. 
+
+![Bortkiewicz, unsung hero of small numbers and weird datasets](../session_6/fig/Ladislaus_Bortkiewicz.jpg){ width=25% }
+
+- not to be confused with the [law of large numbers](https://en.wikipedia.org/wiki/Law_of_large_numbers) which refers to averaging. Here it is a "law of rare events". 
+- events with low frequency $p$ in a large population $n$ follow a Poisson distribution. $Y \sim \mathcal{B}(n,p) \rightarrow \mathcal{P}(np)$ for large $n$ and small $p$. Even if actually there are $n$ Bernouilli trials with varying probability $p_i$. 
+
+## Prussian army horse-kick data 
+
+\scriptsize
+
+```{r kick-data}
+horsekick = read.csv("Prussian_horse-kick_data.csv")
+horsekick
+```
+
+## Btw, conjugate prior = Gamma
+
+\[ \text{Posterior} \propto \text{Likelihood} \times \text{Prior} \]
+
+The same way we have always 
+
+\[ \text{Beta} \propto \text{Binomial} \times \text{Beta} \]
+
+here we have 
+
+\[ \text{Gamma} \propto \text{Poisson} \times \text{Gamma} \]
+
+If you measure $n$ Poisson($\lambda$)-distributed values $y_i$ with $\Gamma(\alpha,\beta)$ prior on $\lambda$, the posterior distribution for $\lambda$ is $\Gamma(\alpha+\sum_{i=1}^n y_i,\beta+n)$.
+
+## Formatting the data
+
+\scriptsize
+
+``` {r bundle-data, echo=TRUE, results='hide'}
+year = horsekick$Year
+count = as.matrix(horsekick[,2:15])
+
+# Bundle data
+str(bdata <- list(year=year, count=count,
+                  ngroups = ncol(count),T=ncol(count)))
+```
+
+## Poisson ANOVA for horse-kick data
+
+\scriptsize
+
+``` {r poisson-anova-jags}
+# Specify model in BUGS language
+cat(file = "poisson.anova.txt", "
+model {
+
+# Priors
+ for (j in 1:ngroups){alpha[j] ~ dnorm(1,0.1)}
+
+# Likelihood
+ for (t in 1:T){
+    for (i in 1:ngroups){
+      count[t,i] ~ dpois(lambda[t,i])
+       log(lambda[t,i]) <- alpha[i]
+    }
+ }
+ 
+# Derived quantity
+mu <- mean(alpha)
+for (i in 1:ngroups){
+    lambdaS[i] <- sum(lambda[1:T,i])
+}
+  
+}
+")
+``` 
+
+
+## Running the model for horse-kick data { .allowframebreaks }
+
+\scriptsize
+
+```{r poisson-anova-running,out.width="80%"}
+
+# Inits function
+inits <- function(){list(alpha = rnorm(14, 0, 1))}
+
+# Parameters to estimate
+params <- c("lambdaS")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out <- jags(bdata, inits, params, "poisson.anova.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+print(out, dig = 3)     # Bayesian analysis
+
+library(mcmcplots)
+denplot(out,parms="lambdaS")
+
+
+```
+
+
+``` {r poisson-anova-jags-bis,echo=FALSE,results='hide'}
+# Specify model in BUGS language
+cat(file = "poisson.anova.bis.txt", "
+model {
+
+# Priors
+ for (j in 1:ngroups){alpha[j] ~ dnorm(1,0.1)}
+
+# Likelihood
+ for (t in 1:T){
+    for (i in 1:ngroups){
+      count[t,i] ~ dpois(lambda[t,i])
+       log(lambda[t,i]) <- alpha[i]
+    }
+ }
+ 
+# Derived quantity
+mu <- mean(alpha)
+ for (t in 1:T){
+    for (i in 1:ngroups){
+       count.rep[t,i] ~ dpois(lambda[t,i])
+    }
+ }
+  
+}
+")
+
+# Inits function
+inits <- function(){list(alpha = rnorm(14, 0, 1))}
+
+# Parameters to estimate
+params <- c("mu", "alpha","count.rep")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out <- jags(bdata, inits, params, "poisson.anova.bis.txt", n.thin = nt, n.chains = nc, 
+n.burnin = nb, n.iter = ni)
+print(out, dig = 3)     # Bayesian analysis
+``` 
+
+## Posterior predictive checks
+
+[Posterior predictive distribution](https://en.wikipedia.org/wiki/Posterior_predictive_distribution)
+
+\[ p(y^{\text{rep}}|y) = \int \underbrace{p(y^{\text{rep}}|y,\theta)}_{\text{new model draws} \times} \underbrace{p(\theta|y)}_{\text{posterior}} d\theta \]
+
+(Negative-Binomial distributed in Poisson ANOVA or regression).
+
+Much easier to obtain as code than write out
+
+\scriptsize
+
+```{r ppc,echo=TRUE,eval=FALSE}
+# New derived quantity
+ for (t in 1:T){
+    for (i in 1:ngroups){
+       count.rep[t,i] ~ dpois(lambda[t,i])
+    }
+ }
+```
+
+## Posterior predictive checks (practice) { .allowframebreaks }
+
+\scriptsize
+
+```{r ppc-plot}
+#library(RColorBrewer)
+str(out$BUGSoutput$sims.list$count.rep)
+par(mfrow=c(4,4))
+hist(count,col="blue",xlim=c(0,10),xlab = "count")
+for (i in 1:15){
+  hist(out$BUGSoutput$sims.list$count.rep[i,,],
+       col="gray",xlim=c(0,10),main="",xlab = "count")
+}
+
+# much more ways to represent PPCs
+```
+
+## What if the data is over-dispersed? 
+
+What do we mean? $\mathbb{V}(Y_i)\propto \mathbb{E}(Y_i)^b$ with $b>1$ ($b=1$) for Poisson.
+
+>- Remember: We can obtain $b=2$ for Gamma or Log-Normal
+>- Logical (and historical) strategy: Poisson-mixture
+
+## Gamma--Poisson aka Negative Binomial
+
+Compound or mixture distribution
+
+\[ Y_i | \lambda_i \sim \mathcal{P}(\lambda_i)\] 
+and 
+\[\lambda_i \sim \Gamma(\alpha,\beta)\] 
+
+is equivalent to $Y_i \sim \text{NB}(r,p)$ with $\alpha =r$ and $\beta = \frac{p}{1-p}$. [Proof](https://gregorygundersen.com/blog/2019/09/16/poisson-gamma-nb/).
+
+Facts about the NB distribution: $\mathbb{E}(Y_i) = \mu = \frac{\alpha}{\beta} = \frac{r(1-p)}{p}$ and we can show that $\mathbb{V}(Y_i) = \mu + \mu^2/r$. 
+
+## Poisson--Log-Normal
+
+$Y_i | \epsilon_i \sim \mathcal{P}(\exp(a + b x_i + \epsilon_i))$ with $\epsilon_i \sim \mathcal{N}(0,\sigma^2)$ for regression
+
+$Y_i | \epsilon_i \sim \mathcal{P}(\exp(\alpha_{j[i]} + \epsilon_i))$ with $\epsilon_i \sim \mathcal{N}(0,\sigma^2)$ for ANOVA
+
+Denoting $m_i = \exp(a + b x_i + \sigma^2/2)$ the mean of the log-normal distribution, [we can show](https://stats.stackexchange.com/questions/427341/how-to-find-an-expression-of-the-variance-of-a-poisson-lognormal-distribution) that $\mathbb{V}(Y_i) = m_i + (e^{\sigma^2}-1) m_i^2$. 
+
+## Applying to horsekick data { .allowframebreaks }
+
+\scriptsize
+``` {r poisson-LN-anova-jags}
+# Specify model in BUGS language
+cat(file = "poisson.ln.anova.txt", "
+model {
+
+# Priors
+ for (j in 1:ngroups){alpha[j] ~ dnorm(1,0.1)}
+ sigma ~ dexp(1)
+ tau <-pow(sigma,-2)
+ sigma2 <-pow(sigma,2)
+
+# Likelihood
+ for (t in 1:T){
+    for (i in 1:ngroups){
+      count[t,i] ~ dpois(lambda[t,i])
+      epsilon[t,i] ~ dnorm(0,tau)
+       log(lambda[t,i]) <- alpha[i] + epsilon[t,i]
+    }
+ }
+ 
+# Derived quantity
+mu <- mean(alpha)
+ for (t in 1:T){
+    for (i in 1:ngroups){
+       epsilon.rep[t,i] ~ dnorm(0,tau)
+       count.rep[t,i] ~ dpois(exp(alpha[i]+epsilon.rep[t,i]))
+    }
+ }
+  
+}
+")
+``` 
+
+```{r poisson-ln-anova-running}
+
+# Inits function
+inits <- function(){list(alpha = rnorm(14, 0, 1))}
+
+# Parameters to estimate
+params <- c("mu", "alpha","sigma2","count.rep")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out2 <- jags(bdata, inits, params, "poisson.ln.anova.txt", n.thin = nt, n.chains = nc, 
+n.burnin = nb, n.iter = ni)
+
+library(mcmcplots)
+denplot(out,parms=c("alpha","mu"))
+
+```
+
+## Posterior predictive checks again { .allowframebreaks }
+
+\scriptsize
+
+```{r ppc-again}
+str(out$BUGSoutput$sims.list$count.rep)
+par(mfrow=c(4,4))
+hist(count,col="blue",xlim=c(0,10),xlab = "count")
+for (i in 1:15){
+  hist(out2$BUGSoutput$sims.list$count.rep[i,,],
+       col="gray",xlim=c(0,10),main="",xlab = "count")
+}
+```
+
+
+## PLN mixed model: estimating intercorps variance { .allowframebreaks } 
+\scriptsize
+``` {r poisson-LMM-jags}
+# Specify model in BUGS language
+cat(file = "poisson.lmm.txt", "
+model {
+
+ # Priors
+ for (j in 1:ngroups){alpha[j] ~ dnorm(1,tau_alpha)}
+ 
+ # Residual variance
+ sigma ~ dexp(1)
+ tau <-pow(sigma,-2)
+ sigma2 <-pow(sigma,2)
+ 
+ # Group-level variance
+ sigma_alpha ~ dexp(1)
+ tau_alpha <-pow(sigma_alpha,-2)
+ sigma2_alpha <-pow(sigma_alpha,2)
+
+# Likelihood
+ for (t in 1:T){
+    for (i in 1:ngroups){
+      count[t,i] ~ dpois(lambda[t,i])
+      epsilon[t,i] ~ dnorm(0,tau)
+       log(lambda[t,i]) <- alpha[i] + epsilon[t,i]
+    }
+ }
+ 
+# Derived quantities
+mu <- mean(alpha)
+ for (t in 1:T){
+    for (i in 1:ngroups){
+       epsilon.rep[t,i] ~ dnorm(0,tau)
+       count.rep[t,i] ~ dpois(exp(alpha[i]+epsilon.rep[t,i]))
+    }
+ }
+}
+")
+``` 
+
+
+```{r poisson-lmm-running}
+
+# Inits function
+inits <- function(){list(alpha = rnorm(14, 0, 1))}
+
+# Parameters to estimate
+params <- c("mu", "alpha","sigma2","sigma2_alpha")
+
+# MCMC settings
+nc <- 3  ;  ni <- 6000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out3 <- jags(bdata, inits, params, "poisson.lmm.txt", n.thin = nt, n.chains = nc, 
+n.burnin = nb, n.iter = ni)
+# print(out, dig = 3)     # Bayesian analysis
+# Much more variance between groups (but we should be wary on such small samples -- good example for model selection later on)
+```
+
+## Partitioning results
+
+\scriptsize
+
+``` {r results-partitioning, out.width = "80%"}
+library(mcmcplots)
+denplot(out3,parms=c("sigma2_alpha","sigma2"))
+```
+
+
+## Offsets: a sequencing example
+
+We have 5 samples of 1245, 1145, 987, 1342, and 1012 sequence reads total.
+Each sample contains DNA sequence counts for 15 species. The total number of counts are determined by the sequencing depth -- not how much DNA we have.
+
+- The data reads for the first sample (sorted by size):
+
+```c(1056, 103,44, 35, 2, 1, 1, 1 1,1,0,0,0,0,0)```
+
+- Second sample
+
+```c(821,248,37,17,12, 5, 3, 1, 1, 0,0,0,0,0,0)```
+
+## Offsets: models
+
+We code log(total number of reads as an offset) = $o_i$. What does that mean? 
+$i$ = sample index, $j$ = species index
+\[ Y_{i,j} = \mathcal{P}(\exp(o_i + \alpha_{j})) \]
+
+\onslide<2->
+$o_i$ is not estimated. It is plugged-in. What does it mean?
+
+Let's say $N_i = \sum_j Y_{i,j}$. We have then
+
+\[ Y_{i,j} = \mathcal{P}(N_i\exp(\alpha_{j})) \]
+
+Thus we model $\frac{Y_{i,j}}{\sum_j Y_{i,j}}$ the fraction of species $j$ in sample $i$.
+
+## Goodness of fit -- more info
+
+- We have seen [*graphical* posterior predictive checks](https://rss.onlinelibrary.wiley.com/doi/10.1111/rssa.12378)
+- Bayesian p-value $\mathbb{P}(T(y^{\text{rep}})>T(y)|\text{model})$. Should be around 0.5, close to 0 or 1 is bad. [A worked example](https://agabrioblog.onrender.com/tutorial/glm2-jags/glm2-jags/)
+
+
+\scriptsize
+
+```{r echo=TRUE,eval=FALSE}
+    # Calculate RSS
+    for (i in 1:ndata){
+      resid[i] <- (Y[i] - lambda[i])/sqrt(lambda[i])
+      SS[i] <- pow(resid[i],2)
+    }
+    # Calculate RSS for replicated data
+    for (i in 1:ndata){
+      resid.rep[i] <- (Y.rep[i] - lambda[i])/sqrt(lambda[i])
+      SS.rep[i] <- pow(resid.rep[i],2)
+    }
+    bayes_pval <- mean(sum(SS)>sum(SS.rep))
+```
+
+\normalsize
+
+- [DHARMa R package with more ideas on model checking, including Dunn-Smyth residuals ](https://cran.r-project.org/web/packages/DHARMa/vignettes/DHARMa.html)  
+
+
+```{r echo=FALSE, eval=FALSE}
+# Other stuff that could have been included 
+# - Tick dataset of Elton et al. 2001
+# - Complete computation of the Bayesian p-value for the various examples
+# - model selection -> later, probably simpler models are best
+```
+
