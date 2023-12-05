@@ -294,11 +294,37 @@ Now without the partial pooling
 
 cat(file = "model_lmm5_bis.txt","
     model {
+    
+    ######## Priors
+    mu ~ dnorm(0, 0.001) # Intercept
+    for (k in 1:7){theta[k] ~ dnorm(0,0.1)}
+    
+    ####### Random effects
+    for(i in 1:M){
+      site[i] ~ dnorm(0,tau.site)  # Random site effects
+      gamma[i] ~ dnorm(0,0.1)
+      }
+    tau.site <- pow(sd.site, -2)
+    sd.site ~ dunif(0, 5)
+    
+    for(t in 1:T){
+      year[t] ~ dnorm(0,tau.year) # Random year effects
+      }
+    tau.year <- pow(sd.year, -2)
+    sd.year ~ dunif(0,3)
+    
+    tau <- pow(sd, -2)
+    sd ~ dunif(0,3)
 
-    # Priors
-
-    # Likelihood
-
+    ############ Likelihood
+    for (i in 1:M){
+      for(t in 1:T){
+        LC[i,t] ~ dnorm(lambda[i,t],tau)
+        lambda[i,t] <- mu + site[i] + year[t] + gamma[i] * yr[t] +
+        theta[1]*elev[i] + theta[2]*elev[i]^2 + theta[3]*forest[i]+
+        theta[4]*date[i,t]+ theta[5]*date[i,t]^2 + theta[6]*dur[i,t]+ theta[7]*twosurveys[i] # mixed model
+        }
+      }
     # Derived quantities
     for(t in 1:T){
       popindex[t] <- sum(lambda[,t])
@@ -358,15 +384,23 @@ cat(file = "model_lmm6.txt","
     model {
 
     ########### Priors ################
-
-    # Intercept 
-    ...
+    mu ~ dnorm(0,0.1)
+    tau <- pow(sd,-2)
+    sd ~ dunif(0,3)
     
-    # Site 
-    ...
+    for(i in 1:M){
+      site[i] ~ dnorm(0,tau.site)  # Random site effects
+      gamma[i] ~ dnorm(mu.gamma[i],tau.gamma)
+      }
+    tau.site <- pow(sd.site, -2)
+    sd.site ~ dunif(0, 5)
     
-    # Year - random
-    ...
+    for(t in 1:T){
+      year[t] ~ dnorm(0,tau.year) # Random year effects
+      }
+    tau.year <- pow(sd.year, -2)
+    sd.year ~ dunif(0,3)
+   
     
     # Other covariate effects on abundance
     for (i in 1:4){
@@ -384,12 +418,15 @@ cat(file = "model_lmm6.txt","
 
     # Linear model for effect of elevation on expectation of trends
     for(i in 1:M){ 
-    ...
+    mu.gamma[i] <- beta0.mu.gamma + beta1.mu.gamma*elev[i] + beta2.mu.gamma*elev[i]^2
        }
      
     for (i in 1:M){
       for(t in 1:T){
-    ...
+        LC[i,t] ~ dnorm(lambda[i,t],tau)
+        lambda[i,t] <- mu + site[i] + year[t] + gamma[i] * yr[t] +
+        theta[1]*elev[i] + theta[2]*elev[i]^2 + theta[3]*forest[i]+
+        theta[4]*dur[i,t] # mixed model
      }
     }
 
@@ -404,7 +441,7 @@ cat(file = "model_lmm6.txt","
 inits <- function() list(mu = rnorm(1), site = rnorm(newM), year = rnorm(length(year)),gamma=rnorm(newM))
 
 # Parameters monitored
-params <- c("mu", "sd.site", "sd.year", "sd", "alpha.mu.gamma","beta1.mu.gamma","beta2.mu.gamma","sd.gamma","theta")
+params <- c("mu", "sd.site", "sd.year", "sd", "beta0.mu.gamma","beta1.mu.gamma","beta2.mu.gamma","sd.gamma","theta")
 
 # MCMC settings
 na <- 1000 ; ni <- 15000; nt <- 10 ; nb <- 5000 ; nc <- 3 # core number for parallel computation
@@ -445,7 +482,7 @@ curve(effect_elev_trend,from=min(elev.sc),to=max(elev.sc),xlab="Stdized elevatio
 par(mfrow=c(1,1))
 ```
 
-We found ...
+We found that the elevation has a positive yet saturating effect on trends. High-altitude sites have the most positive trends. 
 
 [Note: we could try to do some model selection or evaluation of model to see whether the "best" model includes or excludes the effect of covariates on the trends but this would be advanced material, since Bayesian model selection has its quirks $\rightarrow$ end session .]
 
