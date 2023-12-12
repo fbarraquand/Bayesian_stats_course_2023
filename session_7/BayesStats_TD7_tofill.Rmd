@@ -1,0 +1,92 @@
+---
+title: "Analyses of piracy (kleptoparasitism) in salmon-eating Bald eagles"
+author: "F. Barraquand - adapted from Mc Elreath's Statistical Rethinking"
+date: "December 12, 2023"
+output:
+  html_document:
+    highlight: textmate
+    theme: united
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+
+```{r setup, include=FALSE}
+options(width = 300)
+knitr::opts_chunk$set(cache = FALSE) 
+library(R2jags)
+library(knitr)
+library(mcmcplots)
+library(MASS)
+```
+
+# Binomial GLM
+
+The course part does logistic regression. Now we do something akin to an ANOVA, but with binary data. 
+
+
+```{r eagles-exploring data}
+data(eagles)
+eagles
+#P // Size of pirating eagle (L = large, S = small).
+#A // Age of pirating eagle (I = immature, A = adult).
+#V // Size of victim eagle (L = large, S = small).
+ 
+eagles.data = list(N=nrow(eagles),y=eagles$y,z=eagles$n,
+               P=as.numeric(eagles$P)-1,A=as.numeric(eagles$A)-1,
+               V=as.numeric(eagles$V)-1)
+
+```
+
+
+We're in a similar situation to the turtles sex, but with categorical explanatory variables
+
+```{r fitting the first model}
+
+cat(file = "eagles.glm.txt","
+model {
+
+}
+")
+
+```
+
+Fitting the model
+
+```{r fitting-glm}
+# Initial values
+
+# Parameters to estimate
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+# Call JAGS, check convergence and summarize posteriors
+out <- jags(eagles.data, inits, params, "eagles.glm.txt",
+            n.thin = nt, n.chains = nc, n.burnin = nb, n.iter = ni)
+print(out, dig = 3)     # Bayesian analysis
+```
+
+Model checking
+
+```{r checking}
+traplot(out)
+```
+
+
+## Interpreting the model
+
+We see the following effects: 
+...
+
+## A model with hierarchical priors (hyperprior)
+
+Next put a hyperprior on $\beta$s. What are we transforming this model into? 
+
+```{r new-model}
+
+```
+

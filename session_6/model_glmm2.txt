@@ -1,0 +1,58 @@
+
+model {
+
+  # Priors and linear models
+  mu ~ dnorm(0, 0.1)               # Grand mean (intercept)
+
+  for (i in 1:M){
+    site[i] ~ dnorm(0, tau.site)   # Random site effects
+  }
+
+  # Linear model for effect of elevation on expectation of trends
+  for(i in 1:M){ # NOTE: here we model the trends
+    gamma[i] ~ dnorm(mu.gamma[i], tau.gamma) # Random site-level trends
+    mu.gamma[i] <- alpha.mu.gamma + beta1.mu.gamma * elev[i] +
+        beta2.mu.gamma * pow(elev[i],2)
+  }
+  alpha.mu.gamma ~ dnorm(0, 0.1)   # intercept of mean trend on elev
+  beta1.mu.gamma ~ dnorm(0, 0.1)   # lin effect of elev on trend
+  beta2.mu.gamma ~ dnorm(0, 0.1)   # quad effect of elev on trend
+  tau.gamma <- pow(sd.gamma, -2)
+  sd.gamma ~ dunif(0, 0.2)         # Variability of trends
+
+  # Other priors
+  tau.site <- pow(sd.site, -2)
+  sd.site ~ dunif(0, 3)
+
+  # Theta priors 
+  for (i in 1:7){
+    theta[i] ~ dnorm(0, 0.1)       # Covariate effects
+  }
+
+  for(t in 1:T){
+    year[t] ~ dnorm(0, tau.year)   # Random year effects
+  }
+  tau.year <- pow(sd.year, -2)
+  sd.year ~ dunif(0, 2)
+
+  # residual priors
+  tau <- pow(sd, -2)
+  sd ~ dunif(0, 1)
+
+  # Likelihood
+  for (i in 1:M){
+    for(t in 1:T){
+      C[i,t] ~ dpois(lambda[i,t])
+      log(lambda[i,t]) <- mu + gamma[i] * yr[t] +
+          theta[1] * elev[i] + theta[2] * pow(elev[i],2) +
+          theta[3] * forest[i] + theta[4] * date[i,t] +
+          theta[5] * pow(date[i,t],2) + theta[6] * dur[i,t] +
+          theta[7] * twosurveys[i] + site[i] + year[t] + eps[i,t]
+      eps[i,t] ~ dnorm(0, tau)
+    }
+  }
+  # Derived quantities
+  for(t in 1:T){
+    popindex[t] <- sum(lambda[,t])
+  }
+}

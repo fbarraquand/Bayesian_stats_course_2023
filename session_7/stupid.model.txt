@@ -1,0 +1,15 @@
+
+model {
+    # Priors
+    alpha[1] ~ dunif(-10000,10000) #dnorm(0,0.00001)
+    alpha[2] ~ dunif(-10000,10000) #dnorm(0,0.00001)
+    sigma ~ dunif(0,1000) #dexp(0.01) #dexp(1)
+    tau<-pow(sigma,-2)
+    
+    # Likelihood
+    mu<-alpha[1]+alpha[2]
+    for (i in 1:N){
+    y[i] ~ dnorm(mu,tau)
+    }
+   
+}

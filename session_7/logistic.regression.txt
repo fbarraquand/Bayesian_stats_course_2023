@@ -1,0 +1,11 @@
+
+model {
+  mu_temp ~ dnorm(2, 0.1) ## prior of the mean temp
+  gamma ~ dnorm(1, 0.1)  ## prior of the slope
+
+  for (k in 1:N){
+  y[k] ~ dbin(p[k],z[k])     ## likelihood
+  logit(p[k])<-gamma*(temp[k]-mu_temp)
+  }
+
+}
