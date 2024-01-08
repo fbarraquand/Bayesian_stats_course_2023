@@ -1,0 +1,45 @@
+---
+title: "Nonlinear models"
+author: "F. Barraquand"
+date: "January 09, 2023"
+output:
+  html_document:
+  highlight: textmate
+theme: united
+toc: yes
+toc_depth: 4
+toc_float:
+  collapsed: no
+pdf_document:
+  toc: yes
+toc_depth: '4'
+---
+  
+```{r setup, include=FALSE}
+options(width = 300)
+knitr::opts_chunk$set(cache = FALSE) 
+library(R2jags)
+library(knitr)
+library(mcmcplots)
+library(ggmcmc)
+
+```
+
+## Gompertz growth
+
+```{r simulating data}
+a = 15
+b= 1.5
+c = 0.15
+timeindex=1:100
+gompertz_growth = a*exp(-exp(b-c*timeindex)) + rnorm(100,0,1)
+plot(timeindex,gompertz_growth)
+data = list(T=100,y=gompertz_growth)
+```
+
+Objective: Fit in JAGS the Gompertz model corresponding to this simulated dataset. 
+
+```{r fitting-the-model}
+
+```
+
