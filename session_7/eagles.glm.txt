@@ -1,0 +1,27 @@
+
+model {
+  # Priors
+  beta_0 ~ dnorm(0,0.5) # Reference combination P = L, A = A, V = L
+  beta_P ~ dnorm(0,0.5) # Effect P: L->S
+  beta_A ~ dnorm(0,0.5) # Effect A: A->I
+  beta_V ~ dnorm(0,0.5) # Effect V: L->S
+
+  # Likelihood
+  for (i in 1:N){
+  y[i] ~ dbin(p[i],z[i])
+  logit(p[i])<-beta_0 + beta_P*P[i] + beta_A*A[i] + beta_V*V[i]
+  }
+  
+  # Derived quantities
+  Prob_0 <- 1/(1+exp(-beta_0))
+  Prob_P <- 1/(1+exp(-beta_0-beta_P))
+  Prob_A <- 1/(1+exp(-beta_0-beta_A))
+  Prob_V <- 1/(1+exp(-beta_0-beta_V))
+  Ratio_P<- Prob_P/Prob_0
+  Ratio_A<- Prob_A/Prob_0
+  Ratio_V<- Prob_V/Prob_0
+  
+  # Does experience replace size/strength?
+  Ratio_hyp <- Prob_P/Prob_A
+  
+}
