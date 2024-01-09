@@ -1,0 +1,113 @@
+---
+title: "Nonlinear models"
+author: "F. Barraquand"
+date: "January 09, 2023"
+output:
+  html_document:
+  highlight: textmate
+theme: united
+toc: yes
+toc_depth: 4
+toc_float:
+  collapsed: no
+pdf_document:
+  toc: yes
+toc_depth: '4'
+---
+  
+```{r setup, include=FALSE}
+options(width = 300)
+knitr::opts_chunk$set(cache = FALSE) 
+library(R2jags)
+library(knitr)
+library(mcmcplots)
+library(ggmcmc)
+
+```
+
+## Gompertz growth
+
+```{r simulating data}
+a = 15
+b= 1.5
+c = 0.15
+timeindex=1:100
+gompertz_growth = a*exp(-exp(b-c*timeindex)) + rnorm(100,0,1)
+plot(timeindex,gompertz_growth)
+data = list(T=100,y=gompertz_growth)
+```
+
+Objective: Fit in JAGS the Gompertz model corresponding to this simulated dataset. 
+
+
+```{r fitting-the-model}
+cat(file="gompertz.growth.txt","
+model {
+  # Priors
+  a ~ dlnorm(1,0.01) #a>0
+  b ~ dnorm(0,0.1)
+  c ~ dnorm(0,0.1)
+  sigma ~ dunif(0,10)
+  tau<-pow(sigma,-2)
+  
+  # Likelihood
+  for (t in 1:T){
+    y[t] ~ dnorm(mu[t],tau)
+    mu[t] <- a*exp(-exp(b-c*t))
+  }
+
+}    
+    
+")
+
+
+# Inits function
+inits <- function(){list(a = rlnorm(1, 0, 1),
+                         b = rnorm(1,0,1), c = rnorm(1,0,1))}
+
+# Parameters to estimate
+params <- c("a","b","c","sigma")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out <- jags(data, inits, params, "gompertz.growth.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+print(out, dig = 3)     # Bayesian analysis
+
+
+```
+
+```{r model-checks}
+traceplot(out)
+S<-ggs(as.mcmc(out)) #R2jags
+S<-filter(S,Parameter != "deviance")
+ggs_pairs(S)
+
+```
+
+We check that in spite of the correlation we get nice curves
+
+```{r checking-curves}
+# We get the MCMC estimates for all iterations after burn-in
+a_list<-out$BUGSoutput$sims.list$a
+b_list<-out$BUGSoutput$sims.list$b
+c_list<-out$BUGSoutput$sims.list$c
+# We do a function that we want to represent
+gompertz<-function(time,a,b,c){
+  return(a*exp(-exp(b-c*time)))
+  }
+nlist = length(a_list)
+nlist
+
+Timemax<-100
+library("scales")
+plot(1:Timemax,gompertz(1:Timemax,a_list[1],b_list[1],c_list[1]),xlab="time",ylab="Length",col="blue",type="l")
+lines(1:Timemax,gompertz(1:Timemax,a,b,c),col="black")
+for (i in 2:nlist){
+  lines(1:Timemax,gompertz(1:Timemax,a_list[i],b_list[i],c_list[i]),xlab="time",ylab="Length",col=alpha("blue",0.1))
+}
+```
+
+Thus we see that here--and this is true for many nonlinear models--one should not be alarmed by the fact that two parameters are correlated: some can be correlated and yet the overall shape the curve is nicely simulated. Always check. (of course, correlation between parameters in the posteriors plots still means that parameters cannot be interpreted fully independently, especially if the precision in the posteriors is small.)

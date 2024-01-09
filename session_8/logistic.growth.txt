@@ -1,0 +1,20 @@
+
+model {
+  r ~ dnorm(2, 0.01) ## prior on r
+  alpha ~ dlnorm(1, 0.01)  ## prior on alpha
+  K <-(exp(r)-1)/alpha
+  
+  sigma ~ dunif(0.01,2)
+  tau<-pow(sigma,-2)
+  
+  logN[1] ~ dnorm(0,1)
+  N[1] <-exp(logN[1])
+
+  #Likelihood
+  for (t in 1:(tmax-1)){
+  logNpred[t] <- logN[t]+ r - log(1 + alpha*N[t])
+  logN[t+1] ~ dnorm(logNpred[t],tau)
+  N[t+1] <- exp(logN[t+1])
+  }
+
+}
