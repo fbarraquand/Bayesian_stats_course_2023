@@ -1,0 +1,15 @@
+
+model {
+
+  # Priors
+    p~dunif(0,1)
+    psi~dunif(0,1)
+    
+  # Likelihood
+    for(i in 1:nsite){
+      mu[i] <- p*z[i]
+      z[i] ~ dbern(psi)
+      y[i] ~ dbin(mu[i],T)
+      }
+    n<-sum(z[])
+    }

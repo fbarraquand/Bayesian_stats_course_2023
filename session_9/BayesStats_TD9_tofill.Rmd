@@ -1,0 +1,201 @@
+---
+title: "Occupancy models"
+author: "F. Barraquand"
+date: "January 16, 2024"
+output:
+  html_document:
+    highlight: textmate
+    theme: united
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+  
+```{r setup, include=FALSE}
+options(width = 300)
+knitr::opts_chunk$set(cache = FALSE) 
+library(R2jags)
+library(knitr)
+library(mcmcplots)
+library(ggmcmc)
+
+```
+
+Example taken from Kéry \& Schaub's *Bayesian Population Analysis* 2011 book. 
+
+## Gathering the data
+
+* 27 sites (woodpiles), 6 replicated counts for each. 
+
+* Covariates: `forest_edge` (edge or more interior), `date`, `hour` (date and hour of day)
+
+* Detection at 10 of 27 woodpiles and from 1 to 5 times
+
+* Questions:
+
+    - Have some bluebugs been likely missed in some sites? I.e., is there a discrepancy between *observed* number of sites with bluebugs and *estimated* number of sites with bluebugs. 
+    - How many times should one visit a woodpile to detect bluebugs ? $\rightarrow$ Based on the computation of $\mathbb{P}$(detection for $j$ visits)
+    - Ecological effect of forest edge? Thus, there will be an edge effect on $\psi$
+
+```{r real_life_data,eval=TRUE}
+## Read data
+## The data file "bluebug.txt" is available at
+## http://www.vogelwarte.ch/de/projekte/publikationen/bpa/complete-code-and-data-files-of-the-book.html
+data <- read.table("bluebug.txt", header = TRUE)
+
+# Collect the data into suitable structures
+y <- as.matrix(data[, 4:9])
+y[y > 1] <- 1
+edge <- data$forest_edge
+dates <- as.matrix(data[, 10:15])
+hours <- as.matrix(data[, 16:21])
+
+# Standardize covariates
+mean.date <- mean(dates, na.rm = TRUE)
+sd.date <- sd(dates[!is.na(dates)])
+DATES <- (dates-mean.date) / sd.date
+DATES[is.na(DATES)] <- 0
+
+mean.hour <- mean(hours, na.rm = TRUE)
+sd.hour <- sd(hours[!is.na(hours)])
+HOURS <- (hours-mean.hour) / sd.hour
+HOURS[is.na(HOURS)] <- 0
+
+last <- sapply(1:dim(y)[1],
+               function(i) max(grep(FALSE, is.na(y[i, ]))))
+#y[is.na(y)] <- 0
+
+# Bundle data
+bluebug.data <- list(y = y, R = nrow(y), T = ncol(y), edge = edge, DATES = DATES, HOURS = HOURS)
+
+```
+
+Objective: Fit the occupancy model and answer questions
+
+Try to model 
+
+* A linear effect of edge on $\psi$ (``edge`` is a binary covariate)
+
+* A potentially quadratic effect of ``date`` and ``hour`` on $p$. These are the control variables, affect only the detection process, not the observation. 
+
+**Note**
+
+Remember the Poisson log-normal models for bird counts (or Normal for log-counts)? There we had *both control and ecological variables* affecting the same expected log-count $\lambda_{ijk}$. Here, the fact that there is a *latent variable* $Z_i$ (unobserved) at site $i$ means that we can differentiate processes that affect solely $p$ from processes that affect $\psi$ (for 0/1 data) or $\lambda$ (for counts). 
+
+## Fitting the model
+
+```{r fitting-the-model}
+
+# Specify model in BUGS language
+cat(file = "model.jags","
+model {
+
+# Priors
+alpha.psi ~ ...
+beta.psi ~ ...
+alpha.p ~ ...
+beta1.p ~ ...
+beta2.p ~ ...
+beta3.p ~ ...
+beta4.p ~ ...
+
+# Likelihood
+
+# Ecological model for the partially observed true state
+for (i in 1:R) {
+ 
+   # Observation model for the observations
+   for (j in 1:T) {
+ 
+      } #j or t
+   } #i
+
+# Derived quantities
+occ.fs <- ...                           # Number of occupied sites
+mean.p <- ...                           # Sort of average detection
+}
+",fill = TRUE)
+
+# Initial values
+zst <- apply(y, 1, max, na.rm = TRUE)	# Good starting values crucial
+inits <- function(){list(z = zst, alpha.psi=runif(1, -3, 3), alpha.p = runif(1, -3, 3))}
+
+# Parameters monitored
+params <- c("alpha.psi", "beta.psi", "mean.p", "occ.fs", "alpha.p", "beta1.p", "beta2.p", "beta3.p", "beta4.p")
+
+# MCMC settings
+ni <- 30000
+nt <- 10
+nb <- 20000
+nc <- 3
+
+# Call JAGS from R (BRT < 1 min)
+out <- jags(bluebug.data, inits, params, "model.jags", n.chains = nc, n.thin = nt, n.iter = ni, n.burnin = nb, working.directory = getwd())
+
+# Summarize posteriors
+print(out, dig = 2)
+
+# Posterior distribution of the number of occupied sites in actual sample
+hist(out$BUGSoutput$sims.list$occ.fs, nclass = 30, col = "gray", main = "", xlab = "Number of occupied woodpiles (occ.fs)", xlim = c(9, 27))
+abline(v = 10, lwd = 2) # The observed number
+ 
+Pstar <- array(NA, dim = c(out$BUGSoutput$n.sims, 10))
+x <- cbind(rep(1, 3000), rep(2, 3000), rep(3, 3000), rep(4, 3000), rep(5, 3000), rep(6, 3000), rep(7, 3000), rep(8, 3000), rep(9, 3000), rep(10, 3000)) 
+for (i in 1:out$BUGSoutput$n.sims) {
+   for (j in 1:10){
+      Pstar[i,j] <- 1 - (1 - out$BUGSoutput$sims.list$mean.p[i])^j
+      } #j
+   } #i
+
+boxplot(Pstar ~ x, col = "gray", las = 1, ylab = "Pstar", xlab = "Number of surveys", outline = FALSE)
+abline(h = 0.95, lty = 2, lwd = 2)
+ 
+par(mfrow = c(2, 1))
+hist(plogis(out$BUGSoutput$sims.list$alpha.psi), nclass = 40, col = "gray", main = "Forest interior", xlab = "Occupancy probability", xlim = c(0, 1))
+hist(plogis(out$BUGSoutput$sims.list$alpha.psi+ out$BUGSoutput$sims.list$beta.psi), nclass = 40, col = "gray", main = "Forest edge", xlab = "Occupancy probability", xlim = c(0, 1))
+ 
+# Predict effect of time of day with uncertainty
+mcmc.sample <- out$BUGSoutput$n.sims
+
+original.date.pred <- seq(0, 60, length.out = 30)
+original.hour.pred <- seq(180, 540, length.out = 30)
+date.pred <- (original.date.pred - mean.date)/sd.date
+hour.pred <- (original.hour.pred - mean.hour)/sd.hour
+p.pred.date <- plogis(out$BUGSoutput$mean$alpha.p + out$BUGSoutput$mean$beta1.p * date.pred + out$BUGSoutput$mean$beta2.p * date.pred^2 )
+p.pred.hour <- plogis(out$BUGSoutput$mean$alpha.p + out$BUGSoutput$mean$beta3.p * hour.pred + out$BUGSoutput$mean$beta4.p * hour.pred^2 )
+
+array.p.pred.hour <- array.p.pred.date <- array(NA, dim = c(length(hour.pred), mcmc.sample))
+for (i in 1:mcmc.sample){
+   array.p.pred.date[,i] <- plogis(out$BUGSoutput$sims.list$alpha.p[i] + out$BUGSoutput$sims.list$beta1.p[i] * date.pred + out$BUGSoutput$sims.list$beta2.p[i] * date.pred^2)
+   array.p.pred.hour[,i] <- plogis(out$BUGSoutput$sims.list$alpha.p[i] + out$BUGSoutput$sims.list$beta3.p[i] * hour.pred + out$BUGSoutput$sims.list$beta4.p[i] * hour.pred^2)
+   }
+
+# Plot for a subsample of MCMC draws
+sub.set <- sort(sample(1:mcmc.sample, size = 200))
+
+par(mfrow = c(2, 1))
+plot(original.date.pred, p.pred.date, main = "", ylab = "Detection probability", xlab = "Date (1 = 1 July)", ylim = c(0, 1), type = "l", lwd = 3, frame.plot = FALSE)
+for (i in sub.set){
+   lines(original.date.pred, array.p.pred.date[,i], type = "l", lwd = 1, col = "gray")
+   }
+lines(original.date.pred, p.pred.date, type = "l", lwd = 3, col = "blue")
+
+plot(original.hour.pred, p.pred.hour, main = "", ylab = "Detection probability", xlab = "Time of day (mins after noon)", ylim = c(0, 1), type = "l", lwd = 3, frame.plot = FALSE)
+for (i in sub.set){
+   lines(original.hour.pred, array.p.pred.hour[,i], type = "l", lwd = 1, col = "gray")
+   }
+lines(original.hour.pred, p.pred.hour, type = "l", lwd = 3, col = "blue")
+
+```
+
+```{r model-checks}
+traceplot(out)
+S<-ggs(as.mcmc(out)) #R2jags
+S<-filter(S,Parameter != "deviance")
+ggs_pairs(S)
+
+```
