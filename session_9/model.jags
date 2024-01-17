@@ -1,0 +1,33 @@
+
+model {
+
+# Priors
+alpha.psi ~ dnorm(0,1)
+beta.psi ~ dnorm(0,1)
+alpha.p ~ dnorm(0,1)
+beta1.p ~ dnorm(0,1)
+beta2.p ~ dnorm(0,1)
+beta3.p ~ dnorm(0,1)
+beta4.p ~ dnorm(0,1)
+
+# Likelihood
+
+# Ecological model for the partially observed true state
+for (i in 1:R) {
+   z[i] ~ dbern(psi[i])
+   logit(psi[i]) <- alpha.psi + beta.psi * edge[i]
+   
+   # Observation model for the observations
+   for (j in 1:T) {
+      y[i,j] ~ dbern(p[i,j]*z[i])
+      logit(p[i,j]) <- alpha.p + beta1.p*DATES[i,j]  + beta2.p*DATES[i,j]^2
+      + beta3.p*HOURS[i,j]  + beta4.p*HOURS[i,j]^2
+      } #j or t
+   } #i
+
+# Derived quantities
+occ.fs <- sum(z[])                           # Number of occupied sites
+mean.p <- exp(alpha.p)/(1+exp(alpha.p))      # Sort of average detection
+truemean.p <- mean(p[,])      # Sort of average detection
+}
+
