@@ -38,7 +38,7 @@ AIC  | BIC
 Asymptotically *efficient* $\approx$ best predicting model when $n \rightarrow \infty$  | Asymptotically *consistent*: picks *true* model with prob. 1 when $n \rightarrow \infty$ 
 Equivalent to LOOCV when $n \rightarrow \infty$  | Equivalent to Bayes factor $n \rightarrow \infty$ 
 Good for *prediction* | Good for *explanation*/*confirmation*
-Invented by Hirotugu Aikaike | Gideon Schwartz
+Invented by Hirotugu Akaike | Gideon Schwartz
 
 In practice these two philosophies often yield the same answers, though not always. There are intermediates such as the Hannan-Quinn Criterion $= -2\ln(\mathcal{L}(\theta,y))+ p \ln(\ln(n))$. [A non-technical overview in Aho et al. 2017](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.12648)
 

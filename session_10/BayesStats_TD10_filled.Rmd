@@ -1,0 +1,324 @@
+---
+title: "Model selection"
+author: "F. Barraquand"
+date: "January 23, 2024"
+output:
+  html_document:
+    highlight: textmate
+    theme: united
+    toc: yes
+    toc_depth: 4
+    toc_float:
+      collapsed: no
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+---
+  
+```{r setup, include=FALSE}
+options(width = 300)
+knitr::opts_chunk$set(cache = FALSE) 
+library(R2jags)
+library(knitr)
+library(mcmcplots)
+library(ggmcmc)
+library(BayesFactor)
+```
+
+## Linear regression
+
+```{r covariates}
+x0 = 1:100/100
+x1 = rnorm(100,0,1) + x0
+x2 = rnorm(100,0,1) + x0
+cor(x1,x2)
+x3 = rnorm(100,0,1) + x0*0.2 -0.6*x0^2 + 0.3*x0^3
+x4 = rnorm(100,0,1) + x0*0.4 -0.6*x0^2
+```
+
+True model has 3 predictors in $(x_1, x_2, x_3)$. 
+
+```{r true-model}
+## Simulating the model
+y = x1 + 0.07 * x2 - 1 * x3 + rnorm(100,0,0.05)
+## Fitting the model with all covariates
+summary(lm(y ~ x1 + x2 + x3 + x4))
+```
+
+Now computing Bayes factor
+
+```{r}
+datareg = data.frame(y,x1,x2,x3,x4)
+BF  = regressionBF(y ~ .,data=datareg,whichModels = 'top')
+BF
+```
+
+Which model do we select? 
+
+Corollary question: Let's imagine that we have only knowledge of x1 and x2 covariates. We compare a model with only x1 to x1 and x2. Would we rightly conclude that the true model includes x2?  
+
+```{r we-know-x1-x2}
+## We now want to compare a model with x1 to a model with x1 and x2
+BF10 = lmBF(y ~ x1,data=datareg) ## Just one covariate added w.r.t. constant
+BF12vs0  = lmBF(y ~ x1+x2,data=datareg)
+BF12vs1 = BF12vs0  / BF10
+BF12vs1 # we select model 1
+```
+
+No we would not select x2 in this setting (even though it is in the true set of covariates affecting y). 
+
+Now lets check whether the model ``y~x1+x2+x3`` and ``y~x1+x2+x3+x4``are selected by information criteria (1) fitting the different models in JAGS and (2) computing DIC
+
+```{r linear regression}
+
+data = list(y=y,x=cbind(x1,x2,x3,x4),n=length(y))
+
+cat(file="regression.full.txt","
+model {
+  # Priors
+  for (k in 1:4){beta[k] ~ dnorm(0,0.1)}
+  sigma ~ dunif(0,1)
+  tau<-pow(sigma,-2)
+
+  # Likelihood
+  for (i in 1:n){
+    y[i] ~ dnorm(mu[i],tau)
+    mu[i]<- beta[1] * x[i,1] + beta[2] * x[i,2] + beta[3] * x[i,3] + beta[4] * x[i,4]
+  }
+}")
+
+
+cat(file="regression.true.txt","
+model {
+  # Priors
+  for (k in 1:3){beta[k] ~ dnorm(0,0.1)}
+  sigma ~ dunif(0,1)
+  tau<-pow(sigma,-2)
+
+  # Likelihood
+  for (i in 1:n){
+    y[i] ~ dnorm(mu[i],tau)
+    mu[i]<- beta[1] * x[i,1] + beta[2] * x[i,2] + beta[3] * x[i,3] 
+  }
+  
+}")
+
+
+# Inits function
+inits1 <- function(){list(beta = rnorm(4,0,1))}
+inits2 <- function(){list(beta = rnorm(3,0,1))}
+# Parameters to estimate
+params <- c("beta","sigma")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out1 <- jags(data, inits1, params, "regression.full.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+out2 <- jags(data, inits2, params, "regression.true.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+print(out1, dig = 3)     # model with all covariates
+print(out2, dig = 3)     # model with x4 removed (true model)
+
+```
+Lower DIC here but really less ambiguous result with the Bayes factor. 
+
+What about x1 vs x1+x2?
+
+```{r linear regression bis}
+data = list(y=y,x=cbind(x1,x2,x3,x4),n=length(y))
+
+cat(file="regression.x1.txt","
+model {
+  # Priors
+  beta ~ dnorm(0,0.1)
+  sigma ~ dunif(0,1)
+  tau<-pow(sigma,-2)
+
+  # Likelihood
+  for (i in 1:n){
+    y[i] ~ dnorm(mu[i],tau)
+    mu[i]<- beta * x[i,1]
+  }
+}")
+
+
+cat(file="regression.x1x2.txt","
+model {
+  # Priors
+  for (k in 1:2){beta[k] ~ dnorm(0,0.1)}
+  sigma ~ dunif(0,1)
+  tau<-pow(sigma,-2)
+
+  # Likelihood
+  for (i in 1:n){
+    y[i] ~ dnorm(mu[i],tau)
+    mu[i]<- beta[1] * x[i,1] + beta[2] * x[i,2] 
+  }
+  
+}")
+
+
+# Inits function
+inits1 <- function(){list(beta = rnorm(1,0,1))}
+inits2 <- function(){list(beta = rnorm(2,0,1))}
+# Parameters to estimate
+params <- c("beta","sigma")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out1 <- jags(data, inits1, params, "regression.x1.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+out2 <- jags(data, inits2, params, "regression.x1x2.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+print(out1, dig = 3)     # model with x1 covariate
+print(out2, dig = 3)     # model with x1+x2 (closest to true model)
+
+```
+
+Lower DIC for the first model with only x1. Same answer as Bayes factor, we favor the model with solely one covariate even though the second one does have an effect, in this universe where the true model is not included in the models that we (pretend to) know of. 
+
+## Gompertz growth -- comparing nonlinear models
+
+```{r simulating data}
+a = 15
+b= 1.5
+c = 0.15
+timeindex=1:100
+gompertz_growth = a*exp(-exp(b-c*timeindex)) + rnorm(100,0,1)
+plot(timeindex,gompertz_growth)
+data = list(T=100,y=gompertz_growth)
+```
+
+Objective: Fit in JAGS the Gompertz model corresponding to this simulated dataset, and then fit the von Bertalanffy model ($y(t) = a(1-\exp(-bt)) + \epsilon_i$). 
+
+```{r fitting-the-model}
+cat(file="gompertz.growth.txt","
+model {
+  # Priors
+  a ~ dlnorm(1,0.01)
+  b ~ dnorm(0,0.1)
+  c ~ dnorm(0,0.1)
+  sigma ~ dunif(0,10)
+  tau<-pow(sigma,-2)
+  
+  # Likelihood
+  for (t in 1:T){
+    y[t] ~ dnorm(mu[t],tau)
+    mu[t] <- a*exp(-exp(b-c*t))
+  }
+
+}    
+    
+")
+
+
+# Inits function
+inits <- function(){list(a = rlnorm(1, 0, 1),
+                         b = rnorm(1,0,1), c = rnorm(1,0,1))}
+
+# Parameters to estimate
+params <- c("a","b","c","sigma")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out <- jags(data, inits, params, "gompertz.growth.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+print(out, dig = 3)     # Bayesian analysis
+
+
+```
+```{r vonbert}
+
+cat(file="vonbert.growth.txt","
+model {
+  # Priors
+  a ~ dlnorm(0,1)
+  b ~ dlnorm(0,1)
+  tau <- pow(sigma,-2)
+  sigma ~ dunif(0,10) # or dexp(1)
+  
+    # Likelihood
+  for (t in 1:T){
+    y[t] ~ dnorm(mu[t],tau)
+    mu[t] <- a*(1-exp(-b*t))
+  }
+   
+}    
+    
+")
+
+
+# Inits function
+inits <- function(){list(a = rlnorm(1, 0, 1),
+                         b = rlnorm(0,0,1))} ## if you choose to name params a and b
+
+# Parameters to estimate
+params <- c("a","b","sigma")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out2 <- jags(data, inits, params, "vonbert.growth.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+print(out2, dig = 3)     # Bayesian analysis
+
+```
+
+Which model is selected? Gompertz is selected! (which is the true model...)
+
+Useful to do the reverse as well, since here we're asking whether the more complex model can be selected, which can be easier than selecting simpler models whenever the reality is simpler (than the model being fitted). 
+
+## Fitting both models to simulated von Bertalanffy's growth 
+
+```{r simulating data again}
+a = 15
+b= 1/10
+timeindex=1:100
+vanbert_growth = a*(1-exp(-b*timeindex)) + rnorm(100,0,1)
+plot(timeindex,vanbert_growth)
+data = list(T=100,y=vanbert_growth)
+```
+Now fitting both models
+
+```{r fitting-to-vanbertalanffy}
+
+# Inits function
+inits <- function(){list(a = rlnorm(1, 0, 1),
+                         b = rlnorm(0,0,1))}
+
+# Parameters to estimate
+params <- c("a","b","sigma")
+
+# MCMC settings
+nc <- 3  ;  ni <- 2000  ;  nb <- 1000  ;  nt <- 2
+
+# Call JAGS, check convergence and summarize posteriors
+out3 <- jags(data, inits, params, "vanbert.growth.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+            
+print(out3, dig = 3)     # Bayesian analysis
+
+### Now fitting the Gompertz version
+
+# Inits function
+inits <- function(){list(a = rlnorm(1, 0, 1),
+                         b = rnorm(1,0,1), c = rnorm(1,0,1))}
+
+# Parameters to estimate
+params <- c("a","b","c","sigma")
+
+# Call JAGS, check convergence and summarize posteriors
+out4 <- jags(data, inits, params, "gompertz.growth.txt", n.thin = nt, 
+            n.chains = nc, n.burnin = nb, n.iter = ni)
+print(out4, dig = 3)     # Bayesian analysis
+
+```
+
+Do we still get the right model?  Yes. 
